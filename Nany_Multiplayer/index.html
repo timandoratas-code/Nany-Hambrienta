@@ -3116,39 +3116,13 @@ function update(dt){
   updateCamera();
   updateLevel();
 
-  if(game.bossActive){
-    const boss=game.entities.find(e=>e.boss);
-    if(boss) updateBoss(boss,dt);
-  }else{
-    ensureLavaThreats();
-    updateGemSpawning(dt);
-
-    const cfg = levelCfg();
-    game.spawnTimer -= dt;
-    if(game.spawnTimer <= 0 && game.entities.length < 420){
-      const batch = game.entities.length < 180 ? (game.level===1 && game.level2Time<30 ? 4 : 5) : 3;
-      const edgeChance = (game.level===0 && game.score<1000) ? 0.30 : 0.08;
-      for(let i=0;i<batch;i++) spawnFish(Math.random()<edgeChance);
-      game.spawnTimer = cfg.spawnRate * rand(0.7,1.15);
-    }
-    ensurePlankton();
-    ensureFoodAroundPlayer();
-    ensureCornerThreats(dt);
-    ensureEcologyMix();
-    rebalanceFishThreats();
-    ensureEcologyMix();
-  }
-
-  for(let i=game.entities.length-1;i>=0;i--){
-    const e=game.entities[i];
-    if(!Number.isFinite(e.x)||!Number.isFinite(e.y)||!Number.isFinite(e.vx)||!Number.isFinite(e.vy)){
-      game.entities.splice(i,1);
-      continue;
-    }
-    updateEntity(e,dt);
-  }
-  updatePet(dt);
-  if(!game.player._takingDamage) handleCollisions();
+  const onlineWorld=Multiplayer.isConnected();
+  if(!onlineWorld){
+    if(game.bossActive){const boss=game.entities.find(e=>e.boss);if(boss)updateBoss(boss,dt);}
+    else{ensureLavaThreats();updateGemSpawning(dt);const cfg=levelCfg();game.spawnTimer-=dt;if(game.spawnTimer<=0&&game.entities.length<420){const batch=game.entities.length<180?(game.level===1&&game.level2Time<30?4:5):3;const edgeChance=(game.level===0&&game.score<1000)?.30:.08;for(let i=0;i<batch;i++)spawnFish(Math.random()<edgeChance);game.spawnTimer=cfg.spawnRate*rand(.7,1.15);}ensurePlankton();ensureFoodAroundPlayer();ensureCornerThreats(dt);ensureEcologyMix();rebalanceFishThreats();ensureEcologyMix();}
+    for(let i=game.entities.length-1;i>=0;i--){const e=game.entities[i];if(!Number.isFinite(e.x)||!Number.isFinite(e.y)||!Number.isFinite(e.vx)||!Number.isFinite(e.vy)){game.entities.splice(i,1);continue;}updateEntity(e,dt);}
+    updatePet(dt);if(!game.player._takingDamage)handleCollisions();
+  }else{handleOnlineBossCollision();}
 
   for(let i=game.particles.length-1;i>=0;i--){
     const pt = game.particles[i];
@@ -4516,6 +4490,9 @@ function openShop(){
   renderShop();
 }
 
+function mapServerEntity(e){return {...e,behavior:e.ecologyRole==='predator'?'aggro':'passive',wobble:0,finPhase:0,life:0,_chasing:false,_attackCooldown:0,_wanderTimer:999999,_wanderAngle:Math.atan2(e.vy||0,e.vx||1),_vulnerableTail:false,_hitCooldown:0};}
+function syncSharedWorld(world){if(!Array.isArray(world))return;const old=new Map(game.entities.map(e=>[e.id,e]));game.entities=world.map(r=>{const e=mapServerEntity(r),o=old.get(r.id);if(o){e.renderX=o.renderX;e.renderY=o.renderY;}return e;});}
+function removeSharedEntity(id){game.entities=game.entities.filter(e=>e.id!==id);}
 /* =========================================================
    MULTIPLAYER
    -----------------------------------------------------------
@@ -4753,7 +4730,7 @@ const Multiplayer = (()=>{
       arrow.style.color=pc;
       arrow.style.transform=`translate(-50%, -50%) rotate(${Math.atan2(dyWorld,dxWorld)}rad)`;
       const shape=document.createElement('div'); shape.className='mp-arrow-shape';
-      const label=document.createElement('div'); label.className='mp-arrow-label'; label.textContent=isTeam?(p.teamName||p.name||'Jugador'):(p.name||'Jugador');
+      const label=document.createElement('div'); label.className='mp-arrow-label'; label.textContent=p.name||'Jugador';
       arrow.append(shape,label); frag.appendChild(arrow);
     }
     layer.replaceChildren(frag);
@@ -4799,7 +4776,9 @@ const Multiplayer = (()=>{
     setStatus('SOLO');
   }
 
-  function update(now){ sendState(now); renderLeaderboard(); }
+  function handleOnlineBossCollision(){if(!game.player)return;const p=game.player;for(const e of game.entities){if(!e.boss)continue;const t=e.bossType==='shrimp'?{x:e.x-Math.cos(e.angle||0)*e.size*1.12,y:e.y-Math.sin(e.angle||0)*e.size*1.12}:{x:e.x-Math.cos(e.angle||0)*e.size*.92,y:e.y-Math.sin(e.angle||0)*e.size*.92};const r=playerHitbox()+e.size*(e.bossType==='shrimp'?.34:.30);if(Math.hypot(p.x-t.x,p.y-t.y)<=r){Multiplayer.biteBoss(e.id);return;}}}
+
+function update(now){ sendState(now); renderLeaderboard(); }
   function open(room){
     document.getElementById('startScreen').classList.add('hidden');
     document.getElementById('shopScreen').classList.add('hidden');
@@ -4814,7 +4793,8 @@ const Multiplayer = (()=>{
     if(!game.running){ document.getElementById('startScreen').classList.remove('hidden'); }
   }
 
-  return {connect,update,drawRemotePlayers,open,close,disconnect,isConnected:()=>state.connected,room:()=>state.room,setMode:updateModeUI,updateHUD:renderLeaderboard};
+  function biteBoss(id){if(!state.connected||!state.socket||state.socket.readyState!==WebSocket.OPEN)return;try{state.socket.send(JSON.stringify({type:'boss_bite',bossId:id}));}catch(_){}}
+  return {connect,update,drawRemotePlayers,open,close,disconnect,isConnected:()=>state.connected,room:()=>state.room,setMode:updateModeUI,updateHUD:renderLeaderboard,biteBoss};
 })();
 
 
