@@ -196,6 +196,15 @@
   .mp-team-btn.active[data-team="A"]{border-color:#5ea7ff;color:#9ec7ff;background:rgba(94,167,255,.1);}
   .mp-team-btn.active[data-team="B"]{border-color:#ff6a6a;color:#ff9b9b;background:rgba(255,106,106,.1);}
   .mp-mode-note{font-size:11px;color:var(--ink-dim);line-height:1.45;margin:4px 0 12px;}
+  .multiplayer-status{position:absolute;left:50%;top:62px;transform:translateX(-50%);padding:6px 11px;border-radius:999px;background:rgba(4,20,31,.78);border:1px solid rgba(77,255,240,.2);font:700 10px/1 'Space Mono',monospace;color:var(--ink-dim);z-index:15;pointer-events:none;white-space:nowrap;backdrop-filter:blur(6px);} 
+  #mpWorldMarkers{position:absolute;inset:0;z-index:14;pointer-events:none;}
+  .mp-world-marker{position:absolute;display:flex;align-items:center;gap:4px;transform:translate(-50%,-50%);font:700 10px/1 'Space Mono',monospace;text-shadow:0 2px 5px rgba(0,0,0,.9);white-space:nowrap;}
+  .mp-world-marker .arrow{font-size:18px;line-height:1;}
+  .mp-world-marker.team-a{color:#9ec7ff}.mp-world-marker.team-b{color:#ff9b9b}.mp-world-marker.ffa{color:#d7c8ff}.mp-world-marker.coop{color:#7dfff3}
+  .mp-mode:active,.mp-team-btn:active,#mpJoinBtn:active,#mpLeaveBtn:active,#mpCloseBtn:active,#multiplayerBtn:active{transform:translateY(1px) scale(.985);}
+  #pauseBtn.multiplayer-disabled{opacity:.38;cursor:not-allowed;transform:none !important;}
+  @media(max-width:700px){.multiplayer-status{top:46px;left:50%;font-size:9px;padding:5px 9px;} }
+  @media(max-height:520px) and (orientation:landscape){.multiplayer-status{top:40px;font-size:8.5px;} }
   @media(max-width:600px){.mp-modes{grid-template-columns:1fr;}.mp-mode{padding:10px;}}
 
   /* ---------- overlays ---------- */
@@ -210,6 +219,8 @@
     backdrop-filter:blur(3px);
   }
   .hidden{display:none !important;}
+  .multiplayer-overlay{z-index:80;}
+  #multiplayerScreen .panel{max-height:88vh;overflow-y:auto;}
   .hud-pill.gems{border-color:rgba(87,255,99,.45);}
   .hud-pill.gems{border-color:rgba(87,255,99,.45);}
   .hud-pill.gems .dot{background:#57ff63;box-shadow:0 0 8px #57ff63;}
@@ -803,11 +814,12 @@
     <div id="sprintBar"><div id="sprintFill"></div></div>
   </div>
   <canvas id="minimap" width="170" height="170" aria-label="Minimapa"></canvas>
-  <div id="multiplayerStatus" style="position:absolute;left:18px;top:58px;padding:5px 10px;border-radius:999px;background:rgba(4,20,31,.72);border:1px solid rgba(77,255,240,.18);font:700 10px Space Mono,monospace;color:#7fa8ac;z-index:10;pointer-events:none;">SOLO</div>
+  <div id="multiplayerStatus" class="multiplayer-status">SOLO</div>
+  <div id="mpWorldMarkers" aria-hidden="true"></div>
   <div id="saveNotice">Progreso guardado</div>
 
   <!-- MULTIPLAYER -->
-  <div class="overlay hidden" id="multiplayerScreen">
+  <div class="overlay hidden multiplayer-overlay" id="multiplayerScreen">
     <div class="panel dev-modal">
       <p class="eyebrow">Juega con amigos</p>
       <h1 style="font-size:28px;">Multijugador</h1>
@@ -2429,6 +2441,9 @@ function keyboardActive(){
 }
 
 window.addEventListener('keydown', e=>{
+  const target=e.target;
+  const typingTarget=target && (target.tagName==='INPUT' || target.tagName==='TEXTAREA' || target.isContentEditable);
+  if(typingTarget) return;
   if(e.code === 'Space'){
     e.preventDefault();
     startSprint();
@@ -2445,6 +2460,9 @@ window.addEventListener('keydown', e=>{
 });
 
 window.addEventListener('keyup', e=>{
+  const target=e.target;
+  const typingTarget=target && (target.tagName==='INPUT' || target.tagName==='TEXTAREA' || target.isContentEditable);
+  if(typingTarget) return;
   if(e.code === 'Space'){
     e.preventDefault();
     stopSprint();
@@ -4095,6 +4113,7 @@ function render(){
     drawDeathCorpse();
     drawPet();
     Multiplayer.drawRemotePlayers();
+    Multiplayer.drawWorldMarkers();
     drawParticles();
     drawFloaters();
 
@@ -4562,7 +4581,10 @@ const Multiplayer = (()=>{
           if(!p || p.id===state.id) return;
           state.players.set(p.id,{...p,renderX:p.x,renderY:p.y,targetX:p.x,targetY:p.y});
         });
-        setStatus(populationText(state.players.size+1),true);
+        setStatus(`ABISMO · ${modeLabel(state.mode)}${state.mode==='teams' && state.teamName ? ` · ${state.teamName}` : ''} · ${populationText(state.players.size+1)}`,true);
+        Multiplayer.lockPause(true);
+        document.getElementById('multiplayerScreen').classList.add('hidden');
+        if(!game.running) startGame();
       }else if(msg.type==='snapshot'){
         state.lastSnapshotAt=performance.now();
         const incoming=new Set();
@@ -4647,6 +4669,33 @@ const Multiplayer = (()=>{
     }
   }
 
+  function drawWorldMarkers(){
+    const layer=document.getElementById('mpWorldMarkers');
+    if(!layer) return;
+    layer.replaceChildren();
+    if(!state.connected || !game.player) return;
+    const z=getViewZoom();
+    const viewW=W/z, viewH=H/z;
+    const centerX=camera.x + viewW/2, centerY=camera.y + viewH/2;
+    const halfW=W/2-26, halfH=H/2-34;
+    for(const p of state.players.values()) {
+      if(!p.alive) continue;
+      const sx=W/2 + (p.renderX-centerX)*z;
+      const sy=H/2 + (p.renderY-centerY)*z;
+      if(sx>=24 && sx<=W-24 && sy>=90 && sy<=H-24) continue;
+      const dx=sx-W/2, dy=sy-H/2;
+      const scale=Math.min((halfW)/Math.max(Math.abs(dx),1),(halfH)/Math.max(Math.abs(dy),1),1);
+      const x=W/2+dx*scale, y=H/2+dy*scale;
+      const angle=Math.atan2(dy,dx);
+      const el=document.createElement('div');
+      el.className=`mp-world-marker ${state.mode==='teams'?(p.team==='A'?'team-a':'team-b'):state.mode==='coop'?'coop':'ffa'}`;
+      el.style.left=`${x}px`; el.style.top=`${y}px`;
+      const arrow=document.createElement('span'); arrow.className='arrow'; arrow.textContent='➤'; arrow.style.transform=`rotate(${angle}rad)`;
+      const label=document.createElement('span'); label.textContent=p.name||'Jugador';
+      el.append(arrow,label); layer.appendChild(el);
+    }
+  }
+
   function onPlayerEaten(msg){
     if(msg.victimId===state.id){
       if(game.player && !game.player._takingDamage){
@@ -4681,36 +4730,59 @@ const Multiplayer = (()=>{
     try{ state.socket?.send(JSON.stringify({type:'leave'})); }catch(_){}
     try{ state.socket?.close(); }catch(_){}
     state.socket=null; state.connected=false; state.id=null; state.players.clear();
+    Multiplayer.lockPause(false);
     setStatus('SOLO');
   }
 
   function update(now){ sendState(now); }
   function open(room){
-    document.getElementById('multiplayerScreen').classList.remove('hidden');
+    const screen=document.getElementById('multiplayerScreen');
+    screen.classList.remove('hidden');
     const input=document.getElementById('mpRoomInput'); if(input) input.value=normalizeRoom(room||state.room||'ABISMO01');
     updateModeUI(state.mode||'teams');
-    if(state.connected) setStatus(`${modeLabel(state.mode)} · ${populationText(state.players.size+1)}`,true); else setStatus('Desconectado');
+    if(state.connected) setStatus(`ABISMO · ${modeLabel(state.mode)}${state.mode==='teams' && state.teamName ? ` · ${state.teamName}` : ''} · ${populationText(state.players.size+1)}`,true); else setStatus('Elige un modo y una sala');
+    setTimeout(()=>{ if(input) input.focus(); },50);
   }
   function close(){ document.getElementById('multiplayerScreen').classList.add('hidden'); }
 
-  return {connect,update,drawRemotePlayers,open,close,disconnect,isConnected:()=>state.connected,room:()=>state.room};
+  function setControlsLocked(locked){
+    const pauseBtn=document.getElementById('pauseBtn');
+    if(pauseBtn){
+      pauseBtn.disabled=!!locked;
+      pauseBtn.classList.toggle('multiplayer-disabled',!!locked);
+      pauseBtn.textContent='⏸';
+    }
+  }
+
+  return {connect,update,drawRemotePlayers,drawWorldMarkers,open,close,disconnect,isConnected:()=>state.connected,room:()=>state.room,setModeUI:updateModeUI,lockPause:setControlsLocked,state};
 })();
 
 
 /* =========================================================
    UI WIRING
    ========================================================= */
-document.getElementById('multiplayerBtn').onclick = ()=>Multiplayer.open();
+document.getElementById('multiplayerBtn').onclick = ()=>{
+  Multiplayer.open();
+};
 document.getElementById('mpCloseBtn').onclick = ()=>Multiplayer.close();
 document.getElementById('mpLeaveBtn').onclick = ()=>Multiplayer.disconnect();
-document.querySelectorAll('.mp-mode').forEach(btn=>btn.addEventListener('click',()=>{ updateModeUI(btn.dataset.mode); }));
-document.querySelectorAll('.mp-team-btn').forEach(btn=>btn.addEventListener('click',()=>{ document.querySelectorAll('.mp-team-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }));
+document.querySelectorAll('.mp-mode').forEach(btn=>btn.addEventListener('click',(e)=>{
+  e.preventDefault(); e.stopPropagation();
+  Multiplayer.setModeUI(btn.dataset.mode);
+}));
+document.querySelectorAll('.mp-team-btn').forEach(btn=>btn.addEventListener('click',(e)=>{
+  e.preventDefault(); e.stopPropagation();
+  document.querySelectorAll('.mp-team-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}));
 document.getElementById('mpJoinBtn').onclick = ()=>{
   const room=document.getElementById('mpRoomInput').value;
+  if(!room.trim()){ document.getElementById('mpStatus').textContent='Escribe un código de sala.'; return; }
   Multiplayer.connect(room);
-  Multiplayer.close();
-  startGame();
 };
+document.getElementById('mpRoomInput').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){ e.preventDefault(); document.getElementById('mpJoinBtn').click(); }
+});
 document.getElementById('startBtn').onclick = startGame;
 document.getElementById('retryBtn').onclick = startGame;
 document.getElementById('startShopBtn').onclick = openShop;
@@ -4738,6 +4810,18 @@ document.getElementById('closeShop').onclick = ()=>{
 
 
 document.addEventListener('keydown', e=>{
+  const mpVisible=!document.getElementById('multiplayerScreen').classList.contains('hidden');
+  const activeEl=document.activeElement;
+  const typing=activeEl && (activeEl.tagName==='INPUT' || activeEl.tagName==='TEXTAREA' || activeEl.isContentEditable);
+  if(mpVisible && !typing && ['w','a','s','d','ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)){
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+  if(e.key==='Escape' && !document.getElementById('multiplayerScreen').classList.contains('hidden')){
+    Multiplayer.close();
+    return;
+  }
   if(e.key==='Escape' && !document.getElementById('shopScreen').classList.contains('hidden')){
     document.getElementById('closeShop').click();
   }
@@ -4762,11 +4846,12 @@ document.getElementById('muteBtn').onclick = ()=>{
 };
 
 document.getElementById('pauseBtn').onclick = ()=>{
-  if(!game.running) return;
+  if(!game.running || Multiplayer.isConnected()) return;
   game.paused = !game.paused;
   document.getElementById('pauseBtn').textContent = game.paused ? '▶' : '⏸';
 };
 
+Multiplayer.setModeUI('teams');
 updateHUD();
 loadGame();
 
