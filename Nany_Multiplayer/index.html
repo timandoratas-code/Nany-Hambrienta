@@ -2129,6 +2129,12 @@ function loseLifeOrDie(){
   });
 }
 
+function removeEntityAt(i){
+  const e=game.entities[i];
+  if(e && e.sharedId && Multiplayer && Multiplayer.isConnected()) Multiplayer.consumeEntity(e.sharedId);
+  game.entities.splice(i,1);
+}
+
 function handleCollisions(){
   const p = game.player;
   const pSize = playerRadius(growthScore());
@@ -2165,7 +2171,7 @@ function handleCollisions(){
         queueSave();
         AudioSys.coin();
         spawnParticles(e.x,e.y,'#ffd23f',6);
-        game.entities.splice(i,1);
+        removeEntityAt(i);
       }
       continue;
     }
@@ -2180,7 +2186,7 @@ function handleCollisions(){
       // detection/attack window as every other predator.
       if(!e._chasing) continue;
       loseLifeOrDie();
-      game.entities.splice(i,1);
+      removeEntityAt(i);
       return;
     }
 
@@ -2189,7 +2195,7 @@ function handleCollisions(){
       spawnParticles(e.x,e.y,'#c23bff',12);
       spawnFloater(e.x,e.y,'-100','#c23bff');
       AudioSys.hurt();
-      game.entities.splice(i,1);
+      removeEntityAt(i);
       continue;
     }
 
@@ -2210,7 +2216,7 @@ function handleCollisions(){
         spawnFloater(e.x,e.y,'+1 GEMA','#57ff63');
         queueSave();
         AudioSys.coin();
-        game.entities.splice(i,1);
+        removeEntityAt(i);
         continue;
       }
       if(canPlayerEatFish(e)){
@@ -2233,7 +2239,7 @@ function handleCollisions(){
         spawnParticles(e.x,e.y,'#ffd23f',5);
       }
 
-      game.entities.splice(i,1);
+      removeEntityAt(i);
       continue;
     }
 
@@ -2344,7 +2350,7 @@ function updatePet(dt){
   }
   if(target && dist(pet,target)<pet.hitbox+fishHitbox(target)+6){
     const i=game.entities.indexOf(target);
-    if(i>=0)game.entities.splice(i,1);
+    if(i>=0)removeEntityAt(i);
     const coinReward=Save.pet==='ray'?(Math.random()<0.35?2:1):(Save.pet==='crab'&&Math.random()<0.45?2:1);
     Save.coins+=coinReward;game.coins+=coinReward;game.score+=1; game.growthScore+=1; queueSave();
     if(Save.pet==='turtle') game.resistance=Math.min(.75,game.resistance+.10);
@@ -2451,11 +2457,6 @@ function keyboardActive(){
 }
 
 window.addEventListener('keydown', e=>{
-  const target=e.target;
-  const typingTarget=target && (target.tagName==='INPUT' || target.tagName==='TEXTAREA' || target.isContentEditable);
-  if(typingTarget){
-    return;
-  }
   if(e.code === 'Space'){
     e.preventDefault();
     startSprint();
@@ -2472,11 +2473,6 @@ window.addEventListener('keydown', e=>{
 });
 
 window.addEventListener('keyup', e=>{
-  const target=e.target;
-  const typingTarget=target && (target.tagName==='INPUT' || target.tagName==='TEXTAREA' || target.isContentEditable);
-  if(typingTarget){
-    return;
-  }
   if(e.code === 'Space'){
     e.preventDefault();
     stopSprint();
@@ -2813,6 +2809,7 @@ function spawnBoss(type){
 }
 
 function finishBoss(){
+  if(Multiplayer.isConnected() && SharedWorld.active()){ Multiplayer.notifyBossDefeated(); return; }
   const defeatedLevel=game.level;
   game.bossActive=false;
   game.bossType=null;
@@ -2981,6 +2978,7 @@ function updateBoss(e,dt){
   if(e.y>WORLD_H-margin){ e.y=WORLD_H-margin; e._wanderAngle=-Math.PI/2+rand(-.4,.4); }
 }
 function updateLevel(){
+  if(Multiplayer.isConnected() && SharedWorld.active()) return;
   if(!game.running || !game.player || game.transitionLock) return;
   if(game.bossActive) return;
 
@@ -3124,19 +3122,12 @@ function update(dt){
   updateDeathAnim(dt);
 
   updateCamera();
-
-  if(Multiplayer.isOnline()){
-    Multiplayer.update(performance.now());
-    updateHUD();
-    return;
-  }
-
   updateLevel();
 
   if(game.bossActive){
     const boss=game.entities.find(e=>e.boss);
     if(boss) updateBoss(boss,dt);
-  }else{
+  }else if(!Multiplayer.isConnected()){
     ensureLavaThreats();
     updateGemSpawning(dt);
 
@@ -3156,13 +3147,17 @@ function update(dt){
     ensureEcologyMix();
   }
 
-  for(let i=game.entities.length-1;i>=0;i--){
-    const e=game.entities[i];
-    if(!Number.isFinite(e.x)||!Number.isFinite(e.y)||!Number.isFinite(e.vx)||!Number.isFinite(e.vy)){
-      game.entities.splice(i,1);
-      continue;
+  if(Multiplayer.isConnected() && SharedWorld.active()){
+    SharedWorld.update(dt);
+  }else{
+    for(let i=game.entities.length-1;i>=0;i--){
+      const e=game.entities[i];
+      if(!Number.isFinite(e.x)||!Number.isFinite(e.y)||!Number.isFinite(e.vx)||!Number.isFinite(e.vy)){
+        game.entities.splice(i,1);
+        continue;
+      }
+      updateEntity(e,dt);
     }
-    updateEntity(e,dt);
   }
   updatePet(dt);
   if(!game.player._takingDamage) handleCollisions();
@@ -4125,7 +4120,7 @@ function render(){
     drawWorldGrid();
     drawDangerGlow();
 
-    const sorted = Multiplayer.isOnline() ? Multiplayer.renderEntities() : game.entities.slice().sort((a,b)=>a.size-b.size);
+    const sorted = game.entities.slice().sort((a,b)=>a.size-b.size);
     for(const e of sorted){
       if(e.coin) drawCoin(e); else if(e.gemFish) drawGemFish(e); else drawFish(e);
     }
@@ -4197,7 +4192,9 @@ function startGame(){
   game.gemCycleTimer=0; game.gemNextSpawn=rand(25,40); game.gemBurstTimer=0; game.gemSpawnedThisCycle=0;
   updateCamera();
 
-  if(!Multiplayer.isConnected()){
+  if(Multiplayer.isConnected() && SharedWorld.active()) {
+    SharedWorld.setStage(Multiplayer.stage());
+  } else {
     for(let i=0;i<320;i++) spawnFish(false);
     ensurePlankton();
     ensureFoodAroundPlayer();
@@ -4535,21 +4532,166 @@ function openShop(){
   renderShop();
 }
 
+
 /* =========================================================
-   MULTIPLAYER — AGARIO STYLE AUTHORITATIVE WORLD
-   ---------------------------------------------------------
-   Server owns the world. Each client receives only nearby entities.
-   The local game still owns rendering/UI; online mode does not simulate
-   or spawn local fish, so every player is seeing entities from the same
-   server world.
-   ========================================================= */
+   SHARED WORLD (DETERMINISTIC ONLINE)
+   --------------------------------------------------------- */
+const SharedWorld = (()=>{
+  let active=false;
+  let seed=1;
+  let stage=0;
+  let serverEpochMs=Date.now();
+  let worldClock=0;
+  const removed=new Set();
+  let generation=0;
+
+  function hashString(str){
+    let h=2166136261>>>0;
+    for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619);}
+    return h>>>0;
+  }
+  function rng(init){
+    let a=(init>>>0)||1;
+    return ()=>{
+      a = (a + 0x6D2B79F5) | 0;
+      let t = Math.imul(a ^ a>>>15, 1 | a);
+      t ^= t + Math.imul(t ^ t>>>7, 61 | t);
+      return ((t ^ t>>>14) >>> 0) / 4294967296;
+    };
+  }
+  function pick(r, arr){
+    let total=0; for(const x of arr) total += x.weight||1;
+    let n=r()*total; for(const x of arr){ n-=x.weight||1; if(n<=0) return x; }
+    return arr[arr.length-1];
+  }
+  function resetRemoved(){ removed.clear(); }
+  function markRemoved(id){ if(id) removed.add(String(id)); }
+  function isRemoved(id){ return removed.has(String(id)); }
+  function configure(cfg){
+    active=true;
+    seed=(Number(cfg?.seed)>>>0)||1;
+    stage=Number.isFinite(Number(cfg?.stage))?Number(cfg.stage):0;
+    serverEpochMs=Number(cfg?.epochMs)||Date.now();
+    resetRemoved();
+    worldClock=Math.max(0,(Date.now()-serverEpochMs)/1000);
+    generation++;
+    build();
+  }
+  function setStage(nextStage){
+    nextStage=Number(nextStage);
+    if(!Number.isFinite(nextStage) || nextStage===stage) return;
+    stage=nextStage;
+    resetRemoved();
+    generation++;
+    build();
+  }
+  function makeId(i){ return `shared-${seed.toString(36)}-${stage}-${i}`; }
+  function build(){
+    game.entities=[];
+    game.particles=[];
+    game.floaters=[];
+    game.bossActive = stage===1 || stage===3;
+    game.bossType = stage===1 ? 'shrimp' : stage===3 ? 'lava' : null;
+    game.bossHits = 0;
+    const r=rng((seed ^ Math.imul(stage+1,0x9E3779B1))>>>0);
+    if(stage===1 || stage===3){
+      const bossType=stage===1?'shrimp':'lava';
+      const a=r()*Math.PI*2;
+      const margin=900;
+      const x=clamp(900+r()*(WORLD_W-1800),margin,WORLD_W-margin);
+      const y=clamp(900+r()*(WORLD_H-1800),margin,WORLD_H-margin);
+      const size=Math.max(92, playerRadius(0)*(bossType==='shrimp'?8.5:9.2));
+      game.entities.push({
+        sharedId:makeId(0),type:'boss',boss:true,bossType,x,y,
+        vx:Math.cos(a)*0.7,vy:Math.sin(a)*0.7,angle:a,size,baseSize:size,
+        color:bossType==='shrimp'?'#ff7b35':'#7a0f16',
+        speed:bossType==='shrimp'?1.72:1.68,life:0,_chasing:false,_chaseTime:0,
+        _attackCooldown:0,_hitCooldown:0,_dashCooldown:bossType==='lava'?r(1.8,3):999,
+        _dashTime:0,_vulnerableTail:bossType==='lava'?false:true,_wanderTimer:r(.4,1.1),
+        _wanderAngle:a+Math.PI,points:0,power:99,tier:99,ecologyRole:'predator',hazard:null,
+      });
+      return;
+    }
+    const levelForStage=stage===0?0:stage===2?1:2;
+    const eligible=FISH_TYPES.filter(f=>!f.hazard && (f.minLevel==null || levelForStage>=f.minLevel));
+    const prey=eligible.filter(f=>f.variant==='small');
+    const pred=eligible.filter(f=>f.variant==='big');
+    const count=levelForStage===0?260:levelForStage===1?230:250;
+    const predatorCount=levelForStage===0?75:levelForStage===1?82:90;
+    for(let i=0;i<count;i++){
+      const pool=(i<predatorCount)?pred:prey;
+      const t=pick(r,pool.map(f=>({...f,weight:(Number(f.tier||0)<=Math.max(2,levelForStage+3)?4:1)})));
+      const x=120+r()*(WORLD_W-240), y=120+r()*(WORLD_H-240);
+      const a=r()*Math.PI*2;
+      const mul=t.variant==='big'?(1.05+r()*0.7):(0.45+r()*0.4);
+      const sharedSize=Math.max(3,playerRadius(0)*mul);
+      const phase=r()*Math.PI*2, freq=0.22+r()*0.26;
+      const speed=t.speed*(1+levelForStage*.08)*GLOBAL_MOTION_SPEED*(0.72+r()*0.28);
+      game.entities.push({
+        sharedId:makeId(i),type:t.key,family:t.family||t.key,variant:t.variant||'base',renderKey:t.renderKey||t.key,
+        power:t.power,tier:t.tier||0,ecologyRole:t.variant==='big'?'predator':'prey',size:sharedSize,baseSize:t.size,points:t.points,color:t.color,
+        behavior:t.variant==='big'?'aggro':'drift',hazard:null,speed,x,y,vx:Math.cos(a)*speed*.55,vy:Math.sin(a)*speed*.55,
+        angle:a,wobble:phase,finPhase:phase,life:0,coin:false,_chasing:false,_chaseTime:0,_attackCooldown:0,
+        _wanderTimer:1,_wanderAngle:a,_sharedPhase:phase,_sharedFreq:freq,_sharedBaseAngle:a,_sharedSpeed:speed
+      });
+    }
+    // Gem fish are deterministic too (a handful globally, not player-relative).
+    for(let i=0;i<3;i++){
+      const x=180+r()*(WORLD_W-360), y=180+r()*(WORLD_H-360);
+      const a=r()*Math.PI*2, phase=r()*Math.PI*2;
+      game.entities.push({
+        sharedId:makeId(1000+i),type:'gemFish',gemFish:true,coin:false,hazard:null,power:0,tier:0,points:0,
+        size:10+r()*24,baseSize:20,color:'#57ff63',speed:1.15+r()*.55,x,y,vx:Math.cos(a)*.3,vy:Math.sin(a)*.3,
+        wobble:phase,finPhase:phase,life:0,_sharedPhase:phase,_sharedFreq:.18+r()*.12,_sharedBaseAngle:a,_sharedSpeed:1.15+r()*.55
+      });
+    }
+    game.spawnTimer=999999;
+    game.gemCycleTimer=999999;
+    updateCamera();
+    updateHUD();
+  }
+  function syncWorldClock(){ worldClock=Math.max(0,(Date.now()-serverEpochMs)/1000); }
+  function update(dt){
+    if(!active) return;
+    syncWorldClock();
+    for(const e of game.entities){
+      if(e.boss) continue;
+      if(isRemoved(e.sharedId)) continue;
+      const t=worldClock;
+      const phase=e._sharedPhase||0;
+      const freq=e._sharedFreq||.25;
+      const base=e._sharedBaseAngle||0;
+      const turn=Math.sin(t*freq+phase)*0.52 + Math.sin(t*freq*0.47+phase*1.7)*0.18;
+      e.angle=base+turn;
+      const sp=e._sharedSpeed||e.speed||1;
+      e.vx=lerp(e.vx,Math.cos(e.angle)*sp*.55,0.08);
+      e.vy=lerp(e.vy,Math.sin(e.angle)*sp*.55,0.08);
+      e.x+=e.vx*dt*60;
+      e.y+=e.vy*dt*60;
+      const margin=100;
+      if(e.x<margin){e.x=margin;e._sharedBaseAngle=Math.abs(e._sharedBaseAngle||0);}
+      if(e.x>WORLD_W-margin){e.x=WORLD_W-margin;e._sharedBaseAngle=Math.PI-(e._sharedBaseAngle||0);}
+      if(e.y<margin){e.y=margin;e._sharedBaseAngle=-(e._sharedBaseAngle||0);}
+      if(e.y>WORLD_H-margin){e.y=WORLD_H-margin;e._sharedBaseAngle=-(e._sharedBaseAngle||0)+Math.PI;}
+      e.life=worldClock;
+      e.wobble=phase+t*1.9;
+      e.finPhase=phase+t*6;
+    }
+    // Remove entities the server has already confirmed consumed.
+    if(removed.size){ game.entities=game.entities.filter(e=>!e.sharedId || !removed.has(e.sharedId)); }
+  }
+  function handleServerRemoved(ids){ if(Array.isArray(ids)) ids.forEach(markRemoved); if(removed.size)game.entities=game.entities.filter(e=>!e.sharedId||!removed.has(e.sharedId)); }
+  function activeNow(){return active;}
+  return {configure,setStage,update,markRemoved,handleServerRemoved,isRemoved,active:activeNow,get stage(){return stage;},get seed(){return seed;},get generation(){return generation;},worldNow:()=>worldClock};
+})();
+
+/* =========================================================
+   MULTIPLAYER — PLAYERS + SHARED WORLD SEED
+   --------------------------------------------------------- */
 const Multiplayer = (()=>{
   const state={
-    socket:null, connected:false, connecting:false, room:null, id:null,
-    mode:'teams', team:'A', teamName:'Azul', players:new Map(),
-    onReady:null, onFail:null,
-    lastSend:0, sendHz:20, onlineEntities:new Map(), renderCache:[],
-    renderDirty:true, serverStage:0, lastWorldAt:0, deathHandled:false
+    socket:null, connected:false, room:null, id:null, mode:'teams', team:'A', teamName:'Azul',
+    players:new Map(), lastSend:0, sendHz:20, lastSnapshotAt:0, worldSeed:0, worldStage:0
   };
   const statusEl=()=>document.getElementById('multiplayerStatus');
   const leaderboardEl=()=>document.getElementById('mpLeaderboard');
@@ -4559,12 +4701,12 @@ const Multiplayer = (()=>{
   function setStatus(text,ok=false){
     const a=statusEl(); if(a){a.textContent=text;a.classList.toggle('hidden',!ok);a.classList.toggle('show',ok);a.style.color=ok?'#4dfff0':'#7fa8ac';}
     const b=modalStatus(); if(b){b.textContent=text;b.style.color=ok?'#4dfff0':'#7fa8ac';}
-    const pauseBtn=document.getElementById('pauseBtn'); if(pauseBtn) pauseBtn.style.display=ok?'none':'';
+    const pauseBtn=document.getElementById('pauseBtn'); if(pauseBtn){pauseBtn.style.display=ok?'none':'';}
     renderLeaderboard();
   }
   function renderLeaderboard(){
     const el=leaderboardEl(); if(!el)return;
-    if(!state.connected || state.mode!=='ffa'){el.classList.add('hidden');el.innerHTML='';return;}
+    if(!state.connected||state.mode!=='ffa'){el.classList.add('hidden');el.innerHTML='';return;}
     const me={id:state.id,name:Save.fishName||'Nany',score:Math.floor(game.score||0)};
     const rows=[me,...[...state.players.values()].filter(p=>p.alive!==false).map(p=>({id:p.id,name:p.name||'Jugador',score:Math.floor(p.score||0)}))];
     rows.sort((a,b)=>b.score-a.score); const top=rows.slice(0,3);
@@ -4578,193 +4720,89 @@ const Multiplayer = (()=>{
   function modeLabel(mode){return mode==='teams'?'EQUIPOS':mode==='ffa'?'FREE FOR ALL':'COOPERATIVO';}
   function updateModeUI(mode){
     mode=normalizeMode(mode); document.querySelectorAll('.mp-mode').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));
-    const row=document.getElementById('mpTeamRow'); if(row)row.classList.toggle('show',mode==='teams');
-    const note=document.getElementById('mpModeNote');
-    if(note) note.textContent=mode==='teams'?'En Equipos, los aliados no pueden comerse entre sí. Ideal para jugar juntos.':mode==='ffa'?'En Free For All todos compiten contra todos.':'En Cooperativo nadie puede comerse a otro jugador; todos sobreviven juntos contra el océano.';
+    const row=document.getElementById('mpTeamRow');if(row)row.classList.toggle('show',mode==='teams');
+    const note=document.getElementById('mpModeNote');if(note)note.textContent=mode==='teams'?'En Equipos, los aliados no pueden comerse entre sí. Ideal para jugar juntos.':mode==='ffa'?'En Free For All todos compiten contra todos.':'En Cooperativo nadie puede comerse a otro jugador.';
   }
-  function socketUrl(){
-    if(window.NANY_MULTIPLAYER_URL)return window.NANY_MULTIPLAYER_URL;
-    const proto=location.protocol==='https:'?'wss':'ws';
-    return proto+'://'+(location.host||'localhost:8080')+'/ws';
-  }
-  function isConnected(){return state.connected;}
-  function isOnline(){return state.connected||state.connecting;}
-  function rebuildGameEntities(){
-    game.entities=[...state.onlineEntities.values()];
-    state.renderDirty=true;
-  }
-  function updateEntityFromServer(s){
-    const old=state.onlineEntities.get(s.id);
-    const e=old||{};
-    const meta = (typeof fishTypeByKey === 'function') ? fishTypeByKey(s.type) : null;
-    Object.assign(e,s);
-    // El servidor puede enviar entidades compactas sin datos visuales.
-    // Completa los metadatos desde FISH_TYPES para que el render nunca falle.
-    if(meta){
-      if(!e.color) e.color = meta.color;
-      if(!e.renderKey) e.renderKey = meta.renderKey || meta.key;
-      if(!e.variant) e.variant = meta.variant;
-      if(!e.behavior) e.behavior = meta.behavior;
-      if(!e.hazard) e.hazard = meta.hazard || null;
-      if(!Number.isFinite(e.power)) e.power = meta.power || 0;
-      if(!Number.isFinite(e.points)) e.points = meta.points || 0;
-    }
-    if(!e.color) e.color = '#4dfff0';
-    if(!e.renderKey) e.renderKey = e.type || 'fish';
-    if(!Number.isFinite(e.renderX))e.renderX=e.x;
-    if(!Number.isFinite(e.renderY))e.renderY=e.y;
-    e.targetX=e.x; e.targetY=e.y;
-    e.targetVx=Number(e.vx)||0; e.targetVy=Number(e.vy)||0;
-    e._online=true;
-    state.onlineEntities.set(s.id,e);
-  }
-  function applyWorldSnapshot(msg){
-    const keep=new Set();
-    for(const e of (msg.entities||[])){
-      if(!e||!e.id)continue; keep.add(e.id); updateEntityFromServer(e);
-    }
-    for(const id of [...state.onlineEntities.keys()]) if(!keep.has(id)) state.onlineEntities.delete(id);
-    rebuildGameEntities();
-    if(Number.isFinite(Number(msg.stage))) applySharedStage(Number(msg.stage));
-  }
-  function applyPlayerSnapshot(p){
-    if(!p)return;
-    if(p.id===state.id && game.player){
-      const dx=Number(p.x)-game.player.x, dy=Number(p.y)-game.player.y;
-      if(Math.hypot(dx,dy)>90){game.player.x=Number(p.x);game.player.y=Number(p.y);updateCamera();}
-      game.score=Number(p.score)||0; game.growthScore=Number(p.growthScore)||0;
-      if(p.alive===false&&!state.deathHandled){state.deathHandled=true;loseLifeOrDie();}
-      if(p.alive!==false)state.deathHandled=false;
-      updateHUD();
-      return;
-    }
-    if(p.id!==state.id){
-      const old=state.players.get(p.id);
-      state.players.set(p.id,{...p,renderX:old?.renderX??p.x,renderY:old?.renderY??p.y,targetX:p.x,targetY:p.y});
-    }
-  }
-  function onStage(stage){
-    state.serverStage=Number(stage)||0;
-    applySharedStage(state.serverStage);
-  }
-  function connect(room,onReady,onFail){
+  function socketUrl(){ if(window.NANY_MULTIPLAYER_URL)return window.NANY_MULTIPLAYER_URL;const proto=location.protocol==='https:'?'wss':'ws';return `${proto}://${location.host||'localhost:8080'}/ws`; }
+  function connect(room){
     room=normalizeRoom(room);
     if(state.socket){try{state.socket.close();}catch(_){} }
-    state.room=room; state.connected=false; state.connecting=true; state.id=null; state.players.clear(); state.onlineEntities.clear(); game.entities=[];
-    state.onReady=typeof onReady==='function'?onReady:null;
-    state.onFail=typeof onFail==='function'?onFail:null;
-    setStatus('Conectando…');
-    let ws; try{ws=new WebSocket(socketUrl());}catch(err){state.connecting=false;state.onFail?.('No se pudo abrir la conexión');state.onFail=null;setStatus('No se pudo abrir la conexión');return false;}
-    state.socket=ws;
+    state.room=room;state.connected=false;state.id=null;state.players.clear();setStatus('Conectando…');
+    let ws;try{ws=new WebSocket(socketUrl());}catch(_){setStatus('No se pudo abrir la conexión');return false;}state.socket=ws;
     ws.addEventListener('open',()=>{
       const name=(Save.fishName||'Nany').trim().slice(0,18)||'Nany';
-      const mode=currentMode(); const team=mode==='teams'?currentTeam():null;
-      state.mode=mode;state.team=team||null;
-      ws.send(JSON.stringify({type:'join',room,name,mode,team}));
+      const mode=currentMode();const team=mode==='teams'?currentTeam():null;state.mode=mode;state.team=team;state.teamName=team==='A'?'Azul':team==='B'?'Rojo':null;
+      ws.send(JSON.stringify({type:'join',room,name,mode,team,clientVersion:'deterministic-v26'}));
     });
-    ws.addEventListener('message',evt=>{
-      let msg;try{msg=JSON.parse(evt.data);}catch(_){return;}
+    ws.addEventListener('message',ev=>{
+      let msg;try{msg=JSON.parse(ev.data);}catch(_){return;}
       if(msg.type==='welcome'){
-        state.connecting=false;state.connected=true;state.id=msg.id;state.room=msg.room||state.room;state.mode=msg.mode||state.mode;state.team=msg.team||null;state.teamName=msg.teamName||null;state.serverStage=Number(msg.stage)||0;state.deathHandled=false;state.pendingWelcome=msg;
-        // IMPORTANT: do not touch game.player/camera/world before startGame() creates them.
-        // The join callback will start the game first, then syncWelcomeToGame() applies everything.
-        state.players.clear();
-        for(const p of (msg.players||[])) if(p && p.id!==state.id) state.players.set(p.id,{...p,renderX:p.x,renderY:p.y,targetX:p.x,targetY:p.y});
-        updateModeUI(state.mode);setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(msg.population||1)}`,true);
-        const ready=state.onReady; state.onReady=null; state.onFail=null;
-        if(ready) ready();
-      }else if(msg.type==='world'){
-        state.lastWorldAt=performance.now();
-        applyWorldSnapshot(msg);
-        for(const p of (msg.players||[]))applyPlayerSnapshot(p);
+        state.connected=true;state.id=msg.id;state.room=msg.room;state.mode=msg.mode||state.mode;state.team=msg.team||null;state.teamName=msg.teamName||null;state.worldSeed=Number(msg.worldSeed)||1;state.worldStage=Number(msg.worldStage)||0;
+        state.players.clear();(msg.players||[]).forEach(p=>{if(p&&p.id!==state.id)state.players.set(p.id,{...p,renderX:p.x,renderY:p.y,targetX:p.x,targetY:p.y});});
+        SharedWorld.configure({seed:state.worldSeed,stage:state.worldStage,epochMs:Number(msg.worldEpoch)||Date.now()}); if(game.player&&msg.player){game.player.x=msg.player.x;game.player.y=msg.player.y;game.player.vx=0;game.player.vy=0;game.score=Number(msg.player.score)||game.score;game.growthScore=Number(msg.player.growthScore)||game.growthScore;updateCamera();} applySharedStage(state.worldStage);
+        updateModeUI(state.mode);setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(state.players.size+1)}`,true);renderLeaderboard();
+      }else if(msg.type==='snapshot'){
+        state.lastSnapshotAt=performance.now();const incoming=new Set();
+        (msg.players||[]).forEach(p=>{if(!p||p.id===state.id)return;incoming.add(p.id);const old=state.players.get(p.id);state.players.set(p.id,{...p,renderX:old?.renderX??p.x,renderY:old?.renderY??p.y,targetX:p.x,targetY:p.y});});
+        for(const id of state.players.keys())if(!incoming.has(id))state.players.delete(id);
+        state.mode=msg.mode||state.mode; if(Number.isFinite(Number(msg.worldStage))&&Number(msg.worldStage)!==state.worldStage){state.worldStage=Number(msg.worldStage);applySharedStage(state.worldStage);}
+        SharedWorld.handleServerRemoved(msg.removed||[]);
         setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(msg.population||state.players.size+1)}`,true);
-      }else if(msg.type==='player_joined'){if(msg.player)applyPlayerSnapshot(msg.player);}
-      else if(msg.type==='player_left'){state.players.delete(msg.id);renderLeaderboard();}
-      else if(msg.type==='entity_removed'){state.onlineEntities.delete(msg.entityId);rebuildGameEntities();}
-      else if(msg.type==='player_dead'){if(msg.id===state.id&&!state.deathHandled){state.deathHandled=true;loseLifeOrDie();}}
-      else if(msg.type==='respawn'){if(msg.player&&msg.player.id===state.id){state.deathHandled=false;game.player.x=msg.player.x;game.player.y=msg.player.y;game.player.vx=0;game.player.vy=0;game.player._takingDamage=false;game.score=msg.player.score;game.growthScore=msg.player.growthScore;game.invuln=1;updateCamera();updateHUD();}}
-      else if(msg.type==='boss_state'){const e=state.onlineEntities.get(msg.id);if(e){e.bossHits=msg.hits;e._vulnerableTail=!!msg.vulnerable;e._chasing=!!msg.chasing;state.renderDirty=true;}}
-      else if(msg.type==='world_stage'){onStage(Number(msg.stage)||0);}
-      else if(msg.type==='error'){state.connecting=false;setStatus(msg.message||'Error del servidor');}
+      }else if(msg.type==='player_joined'){const p=msg.player;if(p&&p.id!==state.id)state.players.set(p.id,{...p,renderX:p.x,renderY:p.y,targetX:p.x,targetY:p.y});}
+      else if(msg.type==='player_left'){state.players.delete(msg.id);}
+      else if(msg.type==='entity_removed'){SharedWorld.markRemoved(msg.entityId);}
+      else if(msg.type==='world_stage'){state.worldStage=Number(msg.stage)||0;applySharedStage(state.worldStage);}
+      else if(msg.type==='player_eaten'){onPlayerEaten(msg);}
+      else if(msg.type==='respawn'){onRespawn(msg.player);}
+      else if(msg.type==='error'){setStatus(msg.message||'Error del servidor');}
     });
-    ws.addEventListener('close',()=>{
-      const wasConnecting=state.connecting && !state.connected;
-      const fail=state.onFail;
-      state.connected=false;state.connecting=false;state.id=null;state.players.clear();state.onlineEntities.clear();game.entities=[];
-      if(wasConnecting && fail){state.onFail=null;fail('No se pudo conectar al servidor multijugador.');}
-      setStatus(wasConnecting?'No se pudo conectar al servidor':'MULTIJUGADOR DESCONECTADO');
-    });
-    ws.addEventListener('error',()=>setStatus('Error de conexión — revisa que Render esté activo'));
+    ws.addEventListener('close',()=>{state.connected=false;state.id=null;state.players.clear();setStatus('MULTIJUGADOR DESCONECTADO');});
+    ws.addEventListener('error',()=>setStatus('Error de conexión — puedes seguir jugando en SOLO'));
     return true;
   }
-  function syncWelcomeToGame(){
-    const msg=state.pendingWelcome;
-    if(!msg || !game.player) return;
-    if(msg.player){
-      game.player.x=Number(msg.player.x);
-      game.player.y=Number(msg.player.y);
-      game.player.angle=Number.isFinite(Number(msg.player.angle))?Number(msg.player.angle):game.player.angle;
-      game.player.vx=0; game.player.vy=0;
-      game.score=Number(msg.player.score)||game.score;
-      game.growthScore=Number(msg.player.growthScore)||game.growthScore;
-      game.level=Math.max(0,(Number(msg.player.level)||1)-1);
-      updateCamera();
-    }
-    applyWorldSnapshot(msg);
-    updateCamera();
-    updateHUD();
-    state.renderDirty=true;
-  }
-
   function sendState(now){
-    if(!isOnline()||!state.socket||state.socket.readyState!==WebSocket.OPEN||!game.player)return;
-    if(now-state.lastSend<1000/state.sendHz)return;
-    state.lastSend=now;const p=game.player;
-    const payload={type:'state',x:+p.x.toFixed(2),y:+p.y.toFixed(2),angle:+(p.angle||0).toFixed(3),score:Math.floor(game.score),growthScore:Math.floor(growthScore()),level:game.level+1,name:(Save.fishName||'Nany').trim().slice(0,18)||'Nany',radius:+playerRadius(growthScore()).toFixed(2),alive:!!game.running&&!p._takingDamage,sprinting:!!game.sprintActive};
-    try{state.socket.send(JSON.stringify(payload));}catch(_){}
+    if(!state.connected||!state.socket||state.socket.readyState!==WebSocket.OPEN||!game.player)return;
+    if(now-state.lastSend<1000/state.sendHz)return;state.lastSend=now;
+    const p=game.player;const payload={type:'state',x:Number(p.x.toFixed(2)),y:Number(p.y.toFixed(2)),angle:Number((p.angle||0).toFixed(3)),score:Math.floor(game.score),growthScore:Math.floor(growthScore()),level:game.level+1,name:(Save.fishName||'Nany').trim().slice(0,18)||'Nany',radius:Number(playerRadius(growthScore()).toFixed(2)),alive:!!game.running&&!p._takingDamage,sprinting:!!game.sprintActive};
+    try{state.socket.send(JSON.stringify(payload));}catch(_){ }
   }
-  function consumeEntity(sharedId){if(!state.connected||!sharedId||!state.socket||state.socket.readyState!==WebSocket.OPEN)return;try{state.socket.send(JSON.stringify({type:'consume',entityId:sharedId}));}catch(_){} }
-  function bossHit(){if(!state.connected||!state.socket||state.socket.readyState!==WebSocket.OPEN)return;try{state.socket.send(JSON.stringify({type:'boss_hit'}));}catch(_){} }
-  function notifyBossDefeated(){bossHit();}
-  function applyRemoteInterpolation(dt){
-    for(const e of state.onlineEntities.values()){
-      const t=Math.min(1,dt*8);e.renderX=lerp(e.renderX??e.x,e.targetX??e.x,t);e.renderY=lerp(e.renderY??e.y,e.targetY??e.y,t);e.x=e.renderX;e.y=e.renderY;
+  function consumeEntity(sharedId){if(!state.connected||!sharedId||!state.socket||state.socket.readyState!==WebSocket.OPEN)return;try{state.socket.send(JSON.stringify({type:'consume',entityId:sharedId}));}catch(_){} SharedWorld.markRemoved(sharedId);}
+  function notifyBossDefeated(){if(!state.connected||!state.socket||state.socket.readyState!==WebSocket.OPEN)return;try{state.socket.send(JSON.stringify({type:'boss_defeated',bossType:game.bossType}));}catch(_){} }
+  function onPlayerEaten(msg){if(msg.victimId===state.id&&game.player&&!game.player._takingDamage){game.player._takingDamage=true;showDeathBite(true,()=>{});game.camShake=10;AudioSys.hurt();spawnFloater(game.player.x,game.player.y-28,'¡TE COMIÓ OTRO JUGADOR!','#ff7d6b');}else if(msg.victimId){const v=state.players.get(msg.victimId);if(v)v.alive=false;}}
+  function onRespawn(a){if(!a||a.id!==state.id||!game.player)return;game.player.x=a.x;game.player.y=a.y;game.player.vx=0;game.player.vy=0;game.player._takingDamage=false;updateCamera();game.score=a.score;game.growthScore=a.growthScore;game.deathAnim=null;game.invulnUntil=game.time+1.25;updateHUD();}
+  function disconnect(){try{state.socket?.send(JSON.stringify({type:'leave'}));}catch(_){}try{state.socket?.close();}catch(_){}state.socket=null;state.connected=false;state.id=null;state.players.clear();SharedWorld.setStage(0);const a=statusEl();if(a){a.classList.add('hidden');a.classList.remove('show');}const b=leaderboardEl();if(b){b.classList.add('hidden');b.innerHTML='';}}
+  function drawRemotePlayers(){
+    if(!state.connected)return;const z=getViewZoom(),margin=30,w=W,h=H;
+    for(const p of state.players.values()){
+      p.renderX=lerp(p.renderX??p.targetX,p.targetX??p.x,.18);p.renderY=lerp(p.renderY??p.targetY,p.targetY??p.y,.18);if(!p.alive)continue;
+      const s=Math.max(10,Math.min(170,Number(p.radius)||18));const pc=state.mode==='teams'?(p.team==='A'?'#5ea7ff':'#ff6a6a'):'#a084ff';
+      const ent={x:p.renderX,y:p.renderY,vx:Math.cos(p.angle||0)*2,vy:Math.sin(p.angle||0)*2,size:s,color:pc,wobble:game.time,finPhase:game.time*6};
+      ctx.save();ctx.globalAlpha=.92;ctx.shadowColor=pc;ctx.shadowBlur=12;ctx.beginPath();ctx.arc(p.renderX,p.renderY,s*1.02,0,Math.PI*2);ctx.strokeStyle=pc;ctx.globalAlpha=.42;ctx.lineWidth=1.8;ctx.stroke();ctx.restore();drawFishBody(ent,{});
+      ctx.save();ctx.font='700 11px Space Mono, monospace';ctx.textAlign='center';ctx.textBaseline='bottom';ctx.lineWidth=4;ctx.strokeStyle='rgba(2,11,20,.9)';ctx.strokeText(p.name||'Jugador',p.renderX,p.renderY-s-7);ctx.fillStyle=pc;ctx.fillText(p.name||'Jugador',p.renderX,p.renderY-s-7);ctx.restore();
     }
-    rebuildGameEntities();
+    renderArrowLayer();
   }
-  function update(now){
-    if(state.connected&&game.player){
-      const boss=[...state.onlineEntities.values()].find(e=>e.boss);
-      if(boss){
-        const targetX=boss.x-Math.cos(boss.angle||0)*boss.size*0.95;
-        const targetY=boss.y-Math.sin(boss.angle||0)*boss.size*0.95;
-        const reach=playerHitbox()+boss.size*0.32;
-        const near=Math.hypot(game.player.x-targetX,game.player.y-targetY)<=reach;
-        if(near && boss.bossType!=='lava' || (near && boss.vulnerableTail)){
-          if(!state._lastBossHit || now-state._lastBossHit>850){state._lastBossHit=now;bossHit();}
-        }
-      }
+  function renderArrowLayer(){
+    const layer=document.getElementById('mpArrowLayer');if(!layer)return;if(!state.connected){layer.replaceChildren();return;}
+    const w=W,h=H,z=getViewZoom(),isMobile=w<=700||(window.matchMedia&&window.matchMedia('(pointer:coarse)').matches),margin=isMobile?42:36;
+    const selfX=game.player?(game.player.x-camera.x)*z:w/2,selfY=game.player?(game.player.y-camera.y)*z:h/2,cx=clamp(selfX,0,w),cy=clamp(selfY,0,h),left=margin,right=w-margin,top=margin,bottom=h-margin;
+    const frag=document.createDocumentFragment();
+    for(const p of state.players.values()){
+      if(!p.alive)continue;const sx=(p.renderX-camera.x)*z,sy=(p.renderY-camera.y)*z;if(sx>=left&&sx<=right&&sy>=top&&sy<=bottom)continue;
+      const dx=p.renderX-(game.player?.x??p.renderX),dy=p.renderY-(game.player?.y??p.renderY),len=Math.hypot(dx,dy)||1,ux=dx/len,uy=dy/len;
+      let tx=Infinity,ty=Infinity;if(ux>0)tx=(right-cx)/ux;else if(ux<0)tx=(left-cx)/ux;if(uy>0)ty=(bottom-cy)/uy;else if(uy<0)ty=(top-cy)/uy;const t=Math.min(tx>0?tx:Infinity,ty>0?ty:Infinity);if(!Number.isFinite(t))continue;
+      const ax=cx+ux*t,ay=cy+uy*t,pc=state.mode==='teams'?(p.team==='A'?'#5ea7ff':'#ff6a6a'):'#a084ff';const arrow=document.createElement('div');arrow.className='mp-arrow';arrow.style.left=ax+'px';arrow.style.top=ay+'px';arrow.style.color=pc;arrow.style.transform=`translate(-50%,-50%) rotate(${Math.atan2(dy,dx)}rad)`;const shape=document.createElement('div');shape.className='mp-arrow-shape';const label=document.createElement('div');label.className='mp-arrow-label';label.textContent=p.name||'Jugador';arrow.append(shape,label);frag.appendChild(arrow);
     }
-    sendState(now); if(!state.connected)return; applyRemoteInterpolation(1/60);renderLeaderboard();
+    layer.replaceChildren(frag);
   }
-  function renderEntities(){if(!state.renderDirty)return state.renderCache;state.renderCache=[...state.onlineEntities.values()].sort((a,b)=>(a.size||0)-(b.size||0));state.renderDirty=false;return state.renderCache;}
-  function drawRemotePlayers(){if(!state.connected)return;for(const p of state.players.values()){p.renderX=lerp(p.renderX??p.x,p.targetX??p.x,.18);p.renderY=lerp(p.renderY??p.y,p.targetY??p.y,.18);if(!p.alive)continue;const s=Math.max(10,Math.min(170,Number(p.radius)||18));const pc=state.mode==='teams'?(p.team==='A'?'#5ea7ff':'#ff6a6a'):'#a084ff';const ent={x:p.renderX,y:p.renderY,vx:Math.cos(p.angle||0)*2,vy:Math.sin(p.angle||0)*2,size:s,color:pc,wobble:game.time,finPhase:game.time*6,renderKey:p.renderKey||'rival'};ctx.save();ctx.globalAlpha=.92;ctx.shadowColor=pc;ctx.shadowBlur=12;ctx.beginPath();ctx.arc(p.renderX,p.renderY,s*1.02,0,Math.PI*2);ctx.strokeStyle=pc;ctx.globalAlpha=.42;ctx.lineWidth=1.8;ctx.stroke();ctx.restore();drawFishBody(ent,{});ctx.save();ctx.font='700 11px Space Mono, monospace';ctx.textAlign='center';ctx.textBaseline='bottom';ctx.lineWidth=4;ctx.strokeStyle='rgba(2,11,20,.9)';ctx.strokeText(p.name||'Jugador',p.renderX,p.renderY-s-7);ctx.fillStyle=pc;ctx.fillText(p.name||'Jugador',p.renderX,p.renderY-s-7);ctx.restore();}renderArrowLayer();}
-  function renderArrowLayer(){const layer=document.getElementById('mpArrowLayer');if(!layer)return;if(!state.connected){layer.replaceChildren();return;}const w=W,h=H,isMobile=w<=700||(window.matchMedia&&window.matchMedia('(pointer:coarse)').matches),margin=isMobile?42:36;const selfX=w/2,selfY=h/2,left=margin,right=w-margin,top=margin,bottom=h-margin;const frag=document.createDocumentFragment();for(const p of state.players.values()){if(!p.alive)continue;const sx=(p.renderX-camera.x)*getViewZoom(),sy=(p.renderY-camera.y)*getViewZoom();if(sx>=left&&sx<=right&&sy>=top&&sy<=bottom)continue;const dx=p.targetX-(game.player?.x??p.targetX),dy=p.targetY-(game.player?.y??p.targetY),len=Math.hypot(dx,dy)||1,ux=dx/len,uy=dy/len;let tx=Infinity,ty=Infinity;if(ux>0)tx=(right-selfX)/ux;else if(ux<0)tx=(left-selfX)/ux;if(uy>0)ty=(bottom-selfY)/uy;else if(uy<0)ty=(top-selfY)/uy;const t=Math.min(tx>0?tx:Infinity,ty>0?ty:Infinity);if(!Number.isFinite(t))continue;const ax=selfX+ux*t,ay=selfY+uy*t,pc=state.mode==='teams'?(p.team==='A'?'#5ea7ff':'#ff6a6a'):'#a084ff';const arrow=document.createElement('div');arrow.className='mp-arrow';arrow.style.left=ax+'px';arrow.style.top=ay+'px';arrow.style.color=pc;arrow.style.transform=`translate(-50%,-50%) rotate(${Math.atan2(dy,dx)}rad)`;const shape=document.createElement('div');shape.className='mp-arrow-shape';const label=document.createElement('div');label.className='mp-arrow-label';label.textContent=p.name||'Jugador';arrow.append(shape,label);frag.appendChild(arrow);}layer.replaceChildren(frag);}
   function open(){document.getElementById('startScreen').classList.add('hidden');document.getElementById('shopScreen').classList.add('hidden');document.getElementById('gameOverScreen').classList.add('hidden');document.getElementById('multiplayerScreen').classList.remove('hidden');const input=document.getElementById('mpRoomInput');if(input){input.value=normalizeRoom(state.room||'ABISMO01');setTimeout(()=>input.focus(),50);}updateModeUI(state.mode||'teams');}
-  function close(){document.getElementById('multiplayerScreen').classList.add('hidden');if(!game.running&&!isOnline())document.getElementById('startScreen').classList.remove('hidden');}
-  function disconnect(){try{state.socket?.send(JSON.stringify({type:'leave'}));}catch(_){}try{state.socket?.close();}catch(_){}state.socket=null;state.connected=false;state.connecting=false;state.id=null;state.players.clear();state.onlineEntities.clear();game.entities=[];const a=statusEl();if(a)a.classList.add('hidden');const b=leaderboardEl();if(b){b.classList.add('hidden');b.innerHTML='';}}
-  return {connect,disconnect,open,close,isConnected,isOnline,room:()=>state.room,setMode:updateModeUI,update,updateHUD:renderLeaderboard,drawRemotePlayers,renderEntities,consumeEntity,notifyBossDefeated,bossHit,stage:()=>state.serverStage,syncWelcomeToGame};
+  function close(){document.getElementById('multiplayerScreen').classList.add('hidden');if(!game.running)document.getElementById('startScreen').classList.remove('hidden');}
+  function isConnected(){return state.connected;}
+  function stage(){return state.worldStage;}
+  return {connect,disconnect,open,close,drawRemotePlayers,sendState:update,consumeEntity,notifyBossDefeated,isConnected,isConnected,room:()=>state.room,setMode:updateModeUI,update:(now)=>sendState(now),updateHUD:renderLeaderboard,stage:()=>state.worldStage};
 })();
 
-function applySharedStage(stage){
-  if(!Multiplayer.isOnline())return;stage=Number(stage)||0;
-  if(stage===0){game.level=0;game.mapId=1;game.bossActive=false;game.bossType=null;game.bossHits=0;}
-  else if(stage===1){game.level=0;game.mapId=1;game.bossActive=true;game.bossType='shrimp';game.bossHits=0;}
-  else if(stage===2){game.level=1;game.mapId=2;game.bossActive=false;game.bossType=null;game.bossHits=0;game.growthScore=0;}
-  else if(stage===3){game.level=1;game.mapId=2;game.bossActive=true;game.bossType='lava';game.bossHits=0;}
-  else if(stage>=4){game.level=2;game.mapId=3;game.bossActive=false;game.bossType=null;game.bossHits=0;}
-  game.entities=Multiplayer.renderEntities();updateCamera();updateHUD();
-}
+
 function showStartMenu(){
   Multiplayer.disconnect();
   game.running=false;
@@ -4781,6 +4819,20 @@ function showStartMenu(){
 }
 
 /* =========================================================
+   ONLINE STAGE CONTROL
+   ========================================================= */
+function applySharedStage(stage){
+  if(!Multiplayer.isConnected()) return;
+  stage=Number(stage)||0;
+  if(stage===0){ game.level=0;game.mapId=1;game.bossActive=false;game.bossType=null;game.bossHits=0; }
+  else if(stage===1){ game.level=0;game.mapId=1;game.bossActive=true;game.bossType='shrimp';game.bossHits=0; }
+  else if(stage===2){ game.level=1;game.mapId=2;game.growthScore=0;game.level2Time=0;game.bossActive=false;game.bossType=null;game.bossHits=0; if(game.player){const r=playerRadius(growthScore());game.player.y=r+25;game.player.vx=0;game.player.vy=0;} }
+  else if(stage===3){ game.level=1;game.mapId=2;game.bossActive=true;game.bossType='lava';game.bossHits=0; }
+  else if(stage>=4){ game.level=2;game.mapId=3;game.bossActive=false;game.bossType=null;game.bossHits=0; }
+  SharedWorld.setStage(stage); updateCamera(); updateHUD();
+}
+
+/* =========================================================
    UI WIRING
    ========================================================= */
 document.getElementById('multiplayerBtn').onclick = ()=>Multiplayer.open();
@@ -4791,13 +4843,9 @@ document.querySelectorAll('.mp-mode').forEach(btn=>btn.addEventListener('click',
 document.querySelectorAll('.mp-team-btn').forEach(btn=>btn.addEventListener('click',()=>{ document.querySelectorAll('.mp-team-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }));
 document.getElementById('mpJoinBtn').onclick = ()=>{
   const room=document.getElementById('mpRoomInput').value;
-  const btn=document.getElementById('mpJoinBtn');
-  btn.disabled=true;
-  let settled=false;
-  const settleOk=()=>{ if(settled)return; settled=true; clearTimeout(window.__mpJoinTimer); btn.disabled=false; Multiplayer.close(); startGame(); Multiplayer.syncWelcomeToGame(); };
-  const settleFail=(message)=>{ if(settled)return; settled=true; clearTimeout(window.__mpJoinTimer); btn.disabled=false; const s=document.getElementById('mpStatus'); if(s){s.textContent=message;s.style.color='#ff6a6a';} };
-  window.__mpJoinTimer=setTimeout(()=>settleFail('El servidor tardó demasiado en responder. Revisa Render/WebSocket.'),7000);
-  Multiplayer.connect(room,settleOk,settleFail);
+  Multiplayer.connect(room);
+  Multiplayer.close();
+  startGame();
 };
 document.getElementById('startBtn').onclick = startGame;
 document.getElementById('retryBtn').onclick = startGame;
