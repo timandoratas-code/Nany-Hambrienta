@@ -4718,7 +4718,13 @@ const Multiplayer = (()=>{
     const w=W, h=H, z=getViewZoom();
     const isMobile = w <= 700 || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
     const margin = isMobile ? 42 : 36;
-    const cx=w/2, cy=h/2;
+    // El origen debe ser TU pez en coordenadas de pantalla, no el centro
+    // matemático de la ventana. Esto importa cuando la cámara está pegada
+    // a los bordes del mapa.
+    const selfX = game.player ? (game.player.x - camera.x) * z : w/2;
+    const selfY = game.player ? (game.player.y - camera.y) * z : h/2;
+    const cx = Math.max(0, Math.min(w, selfX));
+    const cy = Math.max(0, Math.min(h, selfY));
     const left=margin, right=w-margin, top=margin, bottom=h-margin;
     const frag=document.createDocumentFragment();
 
@@ -4727,9 +4733,13 @@ const Multiplayer = (()=>{
       const sx=(p.renderX-camera.x)*z;
       const sy=(p.renderY-camera.y)*z;
       if(sx>=left && sx<=right && sy>=top && sy<=bottom) continue;
-      const dx=sx-cx, dy=sy-cy;
-      const len=Math.hypot(dx,dy)||1;
-      const ux=dx/len, uy=dy/len;
+      // La dirección debe salir del espacio mundial, no de las posiciones
+      // proyectadas por la cámara. Esto evita errores cuando la cámara está
+      // bloqueada contra una pared/borde del mapa.
+      const dxWorld=(p.renderX - (game.player?.x ?? p.renderX));
+      const dyWorld=(p.renderY - (game.player?.y ?? p.renderY));
+      const lenWorld=Math.hypot(dxWorld,dyWorld)||1;
+      const ux=dxWorld/lenWorld, uy=dyWorld/lenWorld;
       let tx=Infinity, ty=Infinity;
       if(ux>0) tx=(right-cx)/ux; else if(ux<0) tx=(left-cx)/ux;
       if(uy>0) ty=(bottom-cy)/uy; else if(uy<0) ty=(top-cy)/uy;
@@ -4741,7 +4751,7 @@ const Multiplayer = (()=>{
       arrow.className='mp-arrow';
       arrow.style.left=ax+'px'; arrow.style.top=ay+'px';
       arrow.style.color=pc;
-      arrow.style.transform=`rotate(${Math.atan2(dy,dx)}rad)`;
+      arrow.style.transform=`translate(-50%, -50%) rotate(${Math.atan2(dyWorld,dxWorld)}rad)`;
       const shape=document.createElement('div'); shape.className='mp-arrow-shape';
       const label=document.createElement('div'); label.className='mp-arrow-label'; label.textContent=isTeam?(p.teamName||p.name||'Jugador'):(p.name||'Jugador');
       arrow.append(shape,label); frag.appendChild(arrow);
