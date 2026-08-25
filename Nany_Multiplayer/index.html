@@ -374,7 +374,11 @@
   .dev-code:focus{border-color:var(--bio-cyan);}
   .dev-status{min-height:20px;font-size:11px;color:var(--ink-dim);}
   #minimap{position:absolute;right:18px;top:66px;width:170px;height:170px;border:1px solid rgba(77,255,240,.2);border-radius:12px;background:rgba(2,11,20,.72);z-index:9;pointer-events:none;backdrop-filter:blur(5px);}
-  #mpArrowLayer{position:absolute;inset:0;width:100%;height:100%;z-index:80;pointer-events:none;background:transparent !important;}
+  #mpArrowLayer{position:absolute;inset:0;width:100%;height:100%;z-index:80;pointer-events:none;overflow:hidden;}
+  .mp-arrow{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;will-change:transform;}
+  .mp-arrow-shape{position:absolute;left:0;top:0;width:0;height:0;border-top:13px solid transparent;border-bottom:13px solid transparent;border-left:28px solid currentColor;transform:translate(-14px,-13px);filter:drop-shadow(0 0 7px currentColor);}
+  .mp-arrow-label{position:absolute;left:0;top:0;transform:translate(-50%,18px);font:700 10px/1 'Space Mono',monospace;white-space:nowrap;text-shadow:0 2px 4px #000;color:#fff;}
+  @media (max-width:700px){.mp-arrow-shape{border-top-width:10px;border-bottom-width:10px;border-left-width:22px;transform:translate(-11px,-10px);filter:drop-shadow(0 0 6px currentColor);}.mp-arrow-label{font-size:8px;transform:translate(-50%,14px);}}
   @media (max-width:520px){#minimap{width:125px;height:125px;top:62px;right:10px;}}
 
   .row{display:flex;gap:12px;flex-wrap:wrap;}
@@ -815,7 +819,7 @@
     <div id="sprintBar"><div id="sprintFill"></div></div>
   </div>
   <canvas id="minimap" width="170" height="170" aria-label="Minimapa"></canvas>
-  <canvas id="mpArrowLayer" aria-hidden="true"></canvas>
+  <div id="mpArrowLayer" aria-hidden="true"></div>
   <div id="multiplayerStatus" class="mp-hud-status hidden">EQUIPOS · SALA ABISMO01 · 1/8</div>
   <div id="mpLeaderboard" class="mp-leaderboard hidden" aria-live="polite"></div>
   <div id="saveNotice">Progreso guardado</div>
@@ -4708,57 +4712,41 @@ const Multiplayer = (()=>{
   }
 
   function renderArrowLayer(){
-    const arrowCanvas=document.getElementById('mpArrowLayer');
-    if(!arrowCanvas) return;
-    const aw=Math.max(1,Math.floor(W)), ah=Math.max(1,Math.floor(H));
-    if(arrowCanvas.width!==aw) arrowCanvas.width=aw;
-    if(arrowCanvas.height!==ah) arrowCanvas.height=ah;
-    const ac=arrowCanvas.getContext('2d');
-    ac.clearRect(0,0,aw,ah);
-    if(!state.connected) return;
-
-    const z=getViewZoom();
-    const isMobile = aw <= 700 || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
-    const margin = isMobile ? 34 : 32;
-    const cx=aw/2, cy=ah/2;
-    const left=margin, right=aw-margin, top=margin, bottom=ah-margin;
+    const layer=document.getElementById('mpArrowLayer');
+    if(!layer) return;
+    if(!state.connected){ layer.replaceChildren(); return; }
+    const w=W, h=H, z=getViewZoom();
+    const isMobile = w <= 700 || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
+    const margin = isMobile ? 42 : 36;
+    const cx=w/2, cy=h/2;
+    const left=margin, right=w-margin, top=margin, bottom=h-margin;
+    const frag=document.createDocumentFragment();
 
     for(const p of state.players.values()){
       if(!p.alive) continue;
       const sx=(p.renderX-camera.x)*z;
       const sy=(p.renderY-camera.y)*z;
       if(sx>=left && sx<=right && sy>=top && sy<=bottom) continue;
-
       const dx=sx-cx, dy=sy-cy;
       const len=Math.hypot(dx,dy)||1;
       const ux=dx/len, uy=dy/len;
-      let tX=Infinity, tY=Infinity;
-      if(ux>0) tX=(right-cx)/ux; else if(ux<0) tX=(left-cx)/ux;
-      if(uy>0) tY=(bottom-cy)/uy; else if(uy<0) tY=(top-cy)/uy;
-      const t=Math.min(tX>0?tX:Infinity,tY>0?tY:Infinity);
+      let tx=Infinity, ty=Infinity;
+      if(ux>0) tx=(right-cx)/ux; else if(ux<0) tx=(left-cx)/ux;
+      if(uy>0) ty=(bottom-cy)/uy; else if(uy<0) ty=(top-cy)/uy;
+      const t=Math.min(tx>0?tx:Infinity, ty>0?ty:Infinity);
       const ax=cx+ux*t, ay=cy+uy*t;
       const isTeam=state.mode==='teams';
       const pc=isTeam ? (p.team==='A' ? '#5ea7ff' : '#ff6a6a') : '#a084ff';
-      const size=isMobile?19:16;
-
-      ac.save();
-      ac.translate(ax,ay);
-      ac.rotate(Math.atan2(dy,dx));
-      ac.globalAlpha=.98;
-      ac.shadowColor=pc; ac.shadowBlur=isMobile?18:14;
-      ac.fillStyle=pc;
-      ac.beginPath();
-      ac.moveTo(size*1.55,0);
-      ac.lineTo(-size*.75,-size*.72);
-      ac.lineTo(-size*.25,0);
-      ac.lineTo(-size*.75,size*.72);
-      ac.closePath();
-      ac.fill();
-      ac.strokeStyle='rgba(2,11,20,.95)';
-      ac.lineWidth=2.5;
-      ac.stroke();
-      ac.restore();
+      const arrow=document.createElement('div');
+      arrow.className='mp-arrow';
+      arrow.style.left=ax+'px'; arrow.style.top=ay+'px';
+      arrow.style.color=pc;
+      arrow.style.transform=`rotate(${Math.atan2(dy,dx)}rad)`;
+      const shape=document.createElement('div'); shape.className='mp-arrow-shape';
+      const label=document.createElement('div'); label.className='mp-arrow-label'; label.textContent=isTeam?(p.teamName||p.name||'Jugador'):(p.name||'Jugador');
+      arrow.append(shape,label); frag.appendChild(arrow);
     }
+    layer.replaceChildren(frag);
   }
 
   function onPlayerEaten(msg){
