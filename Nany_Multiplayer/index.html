@@ -196,15 +196,16 @@
   .mp-team-btn.active[data-team="A"]{border-color:#5ea7ff;color:#9ec7ff;background:rgba(94,167,255,.1);}
   .mp-team-btn.active[data-team="B"]{border-color:#ff6a6a;color:#ff9b9b;background:rgba(255,106,106,.1);}
   .mp-mode-note{font-size:11px;color:var(--ink-dim);line-height:1.45;margin:4px 0 12px;}
-  .mp-hud-status{position:absolute;right:18px;top:246px;padding:6px 10px;border-radius:9px;background:rgba(4,20,31,.78);border:1px solid rgba(77,255,240,.18);font:700 10px/1.2 'Space Mono',monospace;color:var(--ink-dim);z-index:12;pointer-events:none;backdrop-filter:blur(6px);}
+  .mp-hud-status{position:absolute;right:18px;top:248px;padding:6px 10px;border-radius:9px;background:rgba(4,20,31,.78);border:1px solid rgba(77,255,240,.18);font:700 10px/1.2 'Space Mono',monospace;color:var(--ink-dim);z-index:12;pointer-events:none;backdrop-filter:blur(6px);}
   .mp-hud-status.show{display:block !important;}
-  .mp-leaderboard{position:absolute;right:18px;top:248px;width:190px;z-index:12;padding:8px 10px;border-radius:12px;background:rgba(4,20,31,.74);border:1px solid rgba(255,255,255,.10);font:700 10px/1.35 'Space Mono',monospace;backdrop-filter:blur(6px);pointer-events:none;}
+  .mp-leaderboard{position:absolute;right:18px;top:292px;width:220px;max-height:220px;overflow:hidden;z-index:12;padding:8px 10px;border-radius:12px;background:rgba(4,20,31,.74);border:1px solid rgba(255,255,255,.10);font:700 10px/1.35 'Space Mono',monospace;backdrop-filter:blur(6px);pointer-events:none;}
   .mp-leaderboard .lb-title{color:var(--bio-cyan);letter-spacing:.08em;font-size:9px;text-transform:uppercase;margin-bottom:5px;}
   .mp-leaderboard .lb-row{display:flex;justify-content:space-between;gap:8px;color:var(--ink-light);white-space:nowrap;}
   .mp-leaderboard .lb-row.me{color:#fff;font-weight:900;}
   .mp-leaderboard .lb-left{overflow:hidden;text-overflow:ellipsis;}
   @media (max-width:700px){.mp-hud-status{left:8px;right:auto;top:48px;font-size:8.5px;padding:4px 7px;}.mp-leaderboard{right:8px;top:158px;width:150px;font-size:8.5px;padding:6px 8px;}}
   @media (max-height:520px) and (orientation:landscape){.mp-hud-status{top:48px;left:8px;right:auto;font-size:8px;}.mp-leaderboard{top:108px;right:8px;width:138px;font-size:8px;}}
+  @media (min-width:701px){.mp-hud-status{right:18px;left:auto;top:246px;}.mp-leaderboard{right:18px;left:auto;top:290px;width:220px;}}
   @media(max-width:600px){.mp-modes{grid-template-columns:1fr;}.mp-mode{padding:10px;}}
 
   /* ---------- overlays ---------- */
@@ -4659,6 +4660,10 @@ const Multiplayer = (()=>{
   function drawRemotePlayers(){
     if(!state.connected) return;
     const dt=1/60;
+    const z=getViewZoom();
+    const edgePad=28;
+    const w=W, h=H;
+
     for(const p of state.players.values()){
       p.renderX=lerp(p.renderX??p.targetX,p.targetX??p.x,0.22);
       p.renderY=lerp(p.renderY??p.targetY,p.targetY??p.y,0.22);
@@ -4683,6 +4688,49 @@ const Multiplayer = (()=>{
       ctx.fillText(tag,p.renderX,p.renderY+s+13);
       ctx.restore();
     }
+
+    // Flechas de localización: siempre visibles en los bordes cuando un compañero
+    // está fuera de la pantalla, sin cambiar la cámara ni la jugabilidad.
+    ctx.save();
+    ctx.setTransform(1,0,0,1,0,0);
+    for(const p of state.players.values()){
+      if(!p.alive) continue;
+      const sx=(p.renderX-camera.x)*z;
+      const sy=(p.renderY-camera.y)*z;
+      const off = sx < edgePad || sx > w-edgePad || sy < edgePad || sy > h-edgePad;
+      if(!off) continue;
+
+      const cx=w/2, cy=h/2;
+      const dx=sx-cx, dy=sy-cy;
+      const ang=Math.atan2(dy,dx);
+      const ex=Math.cos(ang), ey=Math.sin(ang);
+      const denom=Math.max(Math.abs(ex)/(w/2-edgePad), Math.abs(ey)/(h/2-edgePad), 0.0001);
+      const ax=cx + ex/denom;
+      const ay=cy + ey/denom;
+      const isTeam=state.mode==='teams';
+      const pc=isTeam ? (p.team==='A' ? '#5ea7ff' : '#ff6a6a') : '#a084ff';
+
+      ctx.save();
+      ctx.translate(ax,ay);
+      ctx.rotate(ang);
+      ctx.fillStyle=pc;
+      ctx.shadowColor=pc; ctx.shadowBlur=10;
+      ctx.beginPath();
+      ctx.moveTo(13,0); ctx.lineTo(-8,-7); ctx.lineTo(-3,0); ctx.lineTo(-8,7); ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      ctx.save();
+      ctx.font='700 9px Space Mono, monospace';
+      ctx.textAlign='center'; ctx.textBaseline='top';
+      ctx.fillStyle=pc;
+      ctx.strokeStyle='rgba(2,11,20,.9)'; ctx.lineWidth=3;
+      const label=p.teamName || p.name || 'Jugador';
+      ctx.strokeText(label,ax,Math.min(h-14,ay+10));
+      ctx.fillText(label,ax,Math.min(h-14,ay+10));
+      ctx.restore();
+    }
+    ctx.restore();
   }
 
   function onPlayerEaten(msg){
