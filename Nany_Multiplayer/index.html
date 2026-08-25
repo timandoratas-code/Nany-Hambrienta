@@ -1170,6 +1170,10 @@ function flashSaveNotice(){
    ========================================================= */
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
+// Alias estable al contexto principal. drawFishBody puede recibir un
+// contexto alternativo (para "hornear" sprites de peces en un canvas
+// off-screen); por defecto sigue apuntando al canvas de siempre.
+const mainCtx = ctx;
 let W=window.innerWidth, H=window.innerHeight, DPR=Math.min(window.devicePixelRatio||1,2);
 const IS_MOBILE_DEVICE = () => window.matchMedia?.('(max-width:700px), (pointer:coarse)').matches ?? (W<=700);
 
@@ -3268,7 +3272,10 @@ function drawBackground(){
 
 // Generic realistic fish body renderer used by all species,
 // with per-species accent details layered on top.
-function drawFishBody(e, opts, simplify){
+function drawFishBody(e, opts, simplify, targetCtx){
+  // Sombra local: todo lo que sigue usa "ctx" como siempre, pero puede
+  // apuntar a un canvas off-screen cuando se está horneando un sprite.
+  const ctx = targetCtx || mainCtx;
   const s = e.size;
   const angle = Math.atan2(e.vy, e.vx) || 0;
   const wob = Math.sin(e.wobble*2.2)*0.08;
@@ -3548,6 +3555,61 @@ function drawFish(e, simplify){
   if(e.boss){ drawBoss(e); return; }
   const opts = FISH_RENDER_OPTS[e.renderKey || e.type] || {};
   drawFishBody(e, opts, simplify);
+}
+
+/* =========================================================
+   SPRITE CACHE PARA MÓVIL (fix real del congelamiento en Safari)
+   -----------------------------------------------------------
+   El motor de canvas de WebKit/Safari es mucho más lento que el de Chrome
+   para crear gradientes y para shadowBlur. drawFishBody crea 2 gradientes
+   nuevos y hace ~10-25 llamadas de dibujo POR PEZ, EN CADA FRAME. Con
+   decenas de peces en pantalla eso es lo que congela Safari, incluso ya
+   con el límite de 30 FPS y el resto de optimizaciones anteriores.
+
+   La solución real es no rehacer ese trabajo cada frame: cada combinación
+   de (tipo de pez + tamaño redondeado + color) se dibuja UNA sola vez a
+   máxima calidad en un canvas invisible ("sprite"), y luego cada frame
+   solo se hace ctx.drawImage(sprite) — una operación barata y bien
+   optimizada incluso en WebKit. El pez se ve exactamente igual que en
+   escritorio; solo cambia CÓMO se pinta, no CÓMO se ve.
+
+   Esto se usa SOLO en móvil. En escritorio drawFish() se sigue llamando
+   exactamente como siempre, sin pasar por esta capa.
+   ========================================================= */
+const mobileFishSpriteCache = new Map();
+
+function bakeFishSprite(renderKey, sizeBucket, color, opts){
+  const dim = Math.max(24, Math.ceil(sizeBucket*6.5));
+  const off = document.createElement('canvas');
+  off.width = dim; off.height = dim;
+  const offCtx = off.getContext('2d');
+  // Pez "de muestra" apuntando hacia +X (ángulo 0), pose estática
+  // (wobble/finPhase en 0) centrado en el canvas off-screen. La rotación
+  // real de cada instancia se aplica después, al pegar el sprite.
+  const sampleEntity = { x: dim/2, y: dim/2, vx: 1, vy: 0, size: sizeBucket, color, wobble: 0, finPhase: 0 };
+  drawFishBody(sampleEntity, opts, false, offCtx); // simplify=false: calidad completa, se paga UNA sola vez
+  return off;
+}
+
+function drawFishSprite(e){
+  if(e.boss){ drawBoss(e); return; }
+  const renderKey = e.renderKey || e.type;
+  const opts = FISH_RENDER_OPTS[renderKey] || {};
+  // Redondear tamaño a buckets de 2 unidades para no generar un sprite
+  // distinto por cada pez individual (el tamaño varía un poco por instancia).
+  const sizeBucket = Math.max(2, Math.round(e.size/2)*2);
+  const key = renderKey+'_'+sizeBucket+'_'+e.color;
+  let sprite = mobileFishSpriteCache.get(key);
+  if(!sprite){
+    sprite = bakeFishSprite(renderKey, sizeBucket, e.color, opts);
+    mobileFishSpriteCache.set(key, sprite);
+  }
+  const angle = Math.atan2(e.vy, e.vx) || 0;
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  ctx.rotate(angle);
+  ctx.drawImage(sprite, -sprite.width/2, -sprite.height/2);
+  ctx.restore();
 }
 
 function drawBoss(e){
@@ -4142,7 +4204,7 @@ function render(){
       visible.sort((a,b)=>a.size-b.size);
     }
     for(const e of visible){
-      if(e.coin) drawCoin(e); else if(e.gemFish) drawGemFish(e); else drawFish(e, mobile);
+      if(e.coin) drawCoin(e); else if(e.gemFish) drawGemFish(e); else if(mobile) drawFishSprite(e); else drawFish(e);
     }
 
     if(!game.deathAnim || !game.deathAnim.active) drawPlayer();
@@ -4713,6 +4775,7 @@ const Multiplayer = (()=>{
     const edgePad=28;
     const w=W, h=H;
 
+    const isMobileNow = IS_MOBILE_DEVICE();
     for(const p of state.players.values()){
       p.renderX=lerp(p.renderX??p.targetX,p.targetX??p.x,0.22);
       p.renderY=lerp(p.renderY??p.targetY,p.targetY??p.y,0.22);
@@ -4721,13 +4784,32 @@ const Multiplayer = (()=>{
       const isTeam = state.mode==='teams';
       const sameTeam = isTeam && p.team && state.team && p.team===state.team;
       const pc = isTeam ? (p.team==='A' ? '#5ea7ff' : '#ff6a6a') : '#a084ff';
-      const ent={x:p.renderX,y:p.renderY,vx:Math.cos(p.angle||0)*2,vy:Math.sin(p.angle||0)*2,size:s,color:pc,wobble:game.time+dt,finPhase:game.time*6};
       ctx.save();
       ctx.globalAlpha=.92;
-      ctx.shadowColor=pc; ctx.shadowBlur=12;
+      // OPTIMIZACIÓN MÓVIL: shadowBlur en el halo de cada jugador remoto es
+      // caro en Safari; en móvil se dibuja el anillo sin difuminado.
+      if(!isMobileNow){ ctx.shadowColor=pc; ctx.shadowBlur=12; }
       ctx.beginPath(); ctx.arc(p.renderX,p.renderY,s*1.02,0,Math.PI*2); ctx.strokeStyle=pc; ctx.globalAlpha=.42; ctx.lineWidth=sameTeam?2.5:1.5; ctx.stroke();
       ctx.restore();
-      drawFishBody(ent,{});
+      const angle = p.angle||0;
+      if(isMobileNow){
+        // Mismo truco de sprite cacheado que la fauna: solo hay 3 colores
+        // posibles de jugador remoto, así que la variedad de sprites es
+        // mínima y el costo por frame pasa de "dibujar un pez completo x7"
+        // a "pegar una imagen x7".
+        const sizeBucket = Math.max(2, Math.round(s/2)*2);
+        const key = 'remote_'+sizeBucket+'_'+pc;
+        let sprite = mobileFishSpriteCache.get(key);
+        if(!sprite){ sprite = bakeFishSprite('remote', sizeBucket, pc, {}); mobileFishSpriteCache.set(key, sprite); }
+        ctx.save();
+        ctx.translate(p.renderX, p.renderY);
+        ctx.rotate(angle);
+        ctx.drawImage(sprite, -sprite.width/2, -sprite.height/2);
+        ctx.restore();
+      } else {
+        const ent={x:p.renderX,y:p.renderY,vx:Math.cos(p.angle||0)*2,vy:Math.sin(p.angle||0)*2,size:s,color:pc,wobble:game.time+dt,finPhase:game.time*6};
+        drawFishBody(ent,{});
+      }
       ctx.save();
       ctx.font='700 11px Space Mono, monospace'; ctx.textAlign='center'; ctx.textBaseline='bottom';
       ctx.lineWidth=4; ctx.strokeStyle='rgba(2,11,20,.9)'; ctx.strokeText(p.name||'Jugador',p.renderX,p.renderY-s-7);
