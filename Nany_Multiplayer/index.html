@@ -374,7 +374,7 @@
   .dev-code:focus{border-color:var(--bio-cyan);}
   .dev-status{min-height:20px;font-size:11px;color:var(--ink-dim);}
   #minimap{position:absolute;right:18px;top:66px;width:170px;height:170px;border:1px solid rgba(77,255,240,.2);border-radius:12px;background:rgba(2,11,20,.72);z-index:9;pointer-events:none;backdrop-filter:blur(5px);}
-  #mpArrowLayer{position:absolute;inset:0;width:100%;height:100%;z-index:30;pointer-events:none;}
+  #mpArrowLayer{position:absolute;inset:0;width:100%;height:100%;z-index:80;pointer-events:none;}
   @media (max-width:520px){#minimap{width:125px;height:125px;top:62px;right:10px;}}
 
   .row{display:flex;gap:12px;flex-wrap:wrap;}
@@ -1959,7 +1959,7 @@ function canPlayerEatFish(e){
   return !!e.gemFish || (!e.hazard && e.ecologyRole==='prey' && fishHitbox(e) < playerHitbox()*0.96);
 }
 function canFishEatPlayer(e){
-  return !e.gemFish && e.ecologyRole==='predator' && !!e._chasing && fishHitbox(e) >= playerHitbox()*1.04;
+  return !e.gemFish && e.ecologyRole==='predator' && fishHitbox(e) >= playerHitbox()*1.04;
 }
 function canPetEatFish(e){
   return !e.coin && !e.hazard && game.petEntity && fishHitbox(e) < game.petEntity.hitbox;
@@ -4547,11 +4547,10 @@ const Multiplayer = (()=>{
     const me={id:state.id,name:Save.fishName||'Nany',score:Math.floor(game.score||0),team:state.team,teamName:state.teamName,power:playerPower(game.score||0)};
     const rows=[me,...[...state.players.values()].filter(p=>p.alive!==false).map(p=>({id:p.id,name:p.name||'Jugador',score:Math.floor(p.score||0),team:p.team,teamName:p.teamName,power:p.power||1}))];
     rows.sort((a,b)=>b.score-a.score);
-    const top=rows.slice(0,8);
-    el.innerHTML=`<div class="lb-title">${modeLabel(state.mode)} · CLASIFICACIÓN</div>`+top.map((p,i)=>{
-      const team=state.mode==='teams' ? ` <span style="opacity:.7">${p.teamName||'Equipo'}</span>` : '';
+    const top=rows.slice(0,3);
+    el.innerHTML=`<div class="lb-title">CLASIFICACIÓN</div>`+top.map((p,i)=>{
       const meClass=p.id===state.id?' me':'';
-      return `<div class="lb-row${meClass}"><span class="lb-left">${i+1}. ${escapeHtml(p.name)}${team}</span><span>${p.score}</span></div>`;
+      return `<div class="lb-row${meClass}"><span class="lb-left">${i+1}. ${escapeHtml(p.name)}</span><span>${p.score}</span></div>`;
     }).join('');
     el.classList.remove('hidden');
   }
@@ -4711,17 +4710,16 @@ const Multiplayer = (()=>{
   function renderArrowLayer(){
     const arrowCanvas=document.getElementById('mpArrowLayer');
     if(!arrowCanvas) return;
-    const aw=Math.max(1,Math.floor(W*DPR)), ah=Math.max(1,Math.floor(H*DPR));
+    const aw=Math.max(1,Math.floor(W)), ah=Math.max(1,Math.floor(H));
     if(arrowCanvas.width!==aw) arrowCanvas.width=aw;
     if(arrowCanvas.height!==ah) arrowCanvas.height=ah;
     const ac=arrowCanvas.getContext('2d');
-    ac.setTransform(DPR,0,0,DPR,0,0);
-    ac.clearRect(0,0,W,H);
+    ac.clearRect(0,0,aw,ah);
     if(!state.connected) return;
 
     const z=getViewZoom();
     const isMobile = aw <= 700 || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
-    const margin = isMobile ? 26 : 32;
+    const margin = isMobile ? 34 : 32;
     const cx=aw/2, cy=ah/2;
     const left=margin, right=aw-margin, top=margin, bottom=ah-margin;
 
@@ -4741,7 +4739,7 @@ const Multiplayer = (()=>{
       const ax=cx+ux*t, ay=cy+uy*t;
       const isTeam=state.mode==='teams';
       const pc=isTeam ? (p.team==='A' ? '#5ea7ff' : '#ff6a6a') : '#a084ff';
-      const size=isMobile?14:16;
+      const size=isMobile?19:16;
 
       ac.save();
       ac.translate(ax,ay);
