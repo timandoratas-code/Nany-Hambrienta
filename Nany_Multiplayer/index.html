@@ -2457,6 +2457,9 @@ function keyboardActive(){
 }
 
 window.addEventListener('keydown', e=>{
+  const activeEl=document.activeElement;
+  const editing=activeEl && (activeEl.tagName==='INPUT'||activeEl.tagName==='TEXTAREA'||activeEl.tagName==='SELECT'||activeEl.isContentEditable);
+  if(editing) return;
   if(e.code === 'Space'){
     e.preventDefault();
     startSprint();
@@ -2473,6 +2476,9 @@ window.addEventListener('keydown', e=>{
 });
 
 window.addEventListener('keyup', e=>{
+  const activeEl=document.activeElement;
+  const editing=activeEl && (activeEl.tagName==='INPUT'||activeEl.tagName==='TEXTAREA'||activeEl.tagName==='SELECT'||activeEl.isContentEditable);
+  if(editing) return;
   if(e.code === 'Space'){
     e.preventDefault();
     stopSprint();
@@ -3126,7 +3132,7 @@ function update(dt){
 
   if(game.bossActive){
     const boss=game.entities.find(e=>e.boss);
-    if(boss) updateBoss(boss,dt);
+    if(boss && !Multiplayer.isConnected()) updateBoss(boss,dt);
   }else if(!Multiplayer.isConnected()){
     ensureLavaThreats();
     updateGemSpawning(dt);
@@ -4691,7 +4697,7 @@ const SharedWorld = (()=>{
 const Multiplayer = (()=>{
   const state={
     socket:null, connected:false, room:null, id:null, mode:'teams', team:'A', teamName:'Azul',
-    players:new Map(), lastSend:0, sendHz:20, lastSnapshotAt:0, worldSeed:0, worldStage:0
+    players:new Map(), lastSend:0, sendHz:20, lastSnapshotAt:0, worldSeed:0, worldStage:0, bossState:null
   };
   const statusEl=()=>document.getElementById('multiplayerStatus');
   const leaderboardEl=()=>document.getElementById('mpLeaderboard');
@@ -4737,7 +4743,7 @@ const Multiplayer = (()=>{
     ws.addEventListener('message',ev=>{
       let msg;try{msg=JSON.parse(ev.data);}catch(_){return;}
       if(msg.type==='welcome'){
-        state.connected=true;state.id=msg.id;state.room=msg.room;state.mode=msg.mode||state.mode;state.team=msg.team||null;state.teamName=msg.teamName||null;state.worldSeed=Number(msg.worldSeed)||1;state.worldStage=Number(msg.worldStage)||0;
+        state.connected=true;state.id=msg.id;state.room=msg.room;state.mode=msg.mode||state.mode;state.team=msg.team||null;state.teamName=msg.teamName||null;state.worldSeed=Number(msg.worldSeed)||1;state.worldStage=Number(msg.worldStage)||0;state.bossState=msg.boss||null;
         state.players.clear();(msg.players||[]).forEach(p=>{if(p&&p.id!==state.id)state.players.set(p.id,{...p,renderX:p.x,renderY:p.y,targetX:p.x,targetY:p.y});});
         SharedWorld.configure({seed:state.worldSeed,stage:state.worldStage,epochMs:Number(msg.worldEpoch)||Date.now()}); if(game.player&&msg.player){game.player.x=msg.player.x;game.player.y=msg.player.y;game.player.vx=0;game.player.vy=0;game.score=Number(msg.player.score)||game.score;game.growthScore=Number(msg.player.growthScore)||game.growthScore;updateCamera();} applySharedStage(state.worldStage);
         updateModeUI(state.mode);setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(state.players.size+1)}`,true);renderLeaderboard();
@@ -4751,7 +4757,7 @@ const Multiplayer = (()=>{
       }else if(msg.type==='player_joined'){const p=msg.player;if(p&&p.id!==state.id)state.players.set(p.id,{...p,renderX:p.x,renderY:p.y,targetX:p.x,targetY:p.y});}
       else if(msg.type==='player_left'){state.players.delete(msg.id);}
       else if(msg.type==='entity_removed'){SharedWorld.markRemoved(msg.entityId);}
-      else if(msg.type==='world_stage'){state.worldStage=Number(msg.stage)||0;applySharedStage(state.worldStage);}
+      else if(msg.type==='boss_state'){state.bossState=msg.boss||null; const b=game.entities.find(e=>e.boss); if(b&&msg.boss){b.bossHits=Number(msg.boss.hits)||0;b.vulnerableTail=!!msg.boss.vulnerableTail;b._chasing=!!msg.boss.chasing;}}else if(msg.type==='world_stage'){state.worldStage=Number(msg.stage)||0;applySharedStage(state.worldStage);}
       else if(msg.type==='player_eaten'){onPlayerEaten(msg);}
       else if(msg.type==='respawn'){onRespawn(msg.player);}
       else if(msg.type==='error'){setStatus(msg.message||'Error del servidor');}
@@ -4766,7 +4772,7 @@ const Multiplayer = (()=>{
     const p=game.player;const payload={type:'state',x:Number(p.x.toFixed(2)),y:Number(p.y.toFixed(2)),angle:Number((p.angle||0).toFixed(3)),score:Math.floor(game.score),growthScore:Math.floor(growthScore()),level:game.level+1,name:(Save.fishName||'Nany').trim().slice(0,18)||'Nany',radius:Number(playerRadius(growthScore()).toFixed(2)),alive:!!game.running&&!p._takingDamage,sprinting:!!game.sprintActive};
     try{state.socket.send(JSON.stringify(payload));}catch(_){ }
   }
-  function consumeEntity(sharedId){if(!state.connected||!sharedId||!state.socket||state.socket.readyState!==WebSocket.OPEN)return;try{state.socket.send(JSON.stringify({type:'consume',entityId:sharedId}));}catch(_){} SharedWorld.markRemoved(sharedId);}
+  function consumeEntity(sharedId,points=1){if(!state.connected||!sharedId||!state.socket||state.socket.readyState!==WebSocket.OPEN)return;try{state.socket.send(JSON.stringify({type:'consume',entityId:sharedId,points:Number(points)||1}));}catch(_){} SharedWorld.markRemoved(sharedId);}
   function notifyBossDefeated(){if(!state.connected||!state.socket||state.socket.readyState!==WebSocket.OPEN)return;try{state.socket.send(JSON.stringify({type:'boss_defeated',bossType:game.bossType}));}catch(_){} }
   function onPlayerEaten(msg){if(msg.victimId===state.id&&game.player&&!game.player._takingDamage){game.player._takingDamage=true;showDeathBite(true,()=>{});game.camShake=10;AudioSys.hurt();spawnFloater(game.player.x,game.player.y-28,'¡TE COMIÓ OTRO JUGADOR!','#ff7d6b');}else if(msg.victimId){const v=state.players.get(msg.victimId);if(v)v.alive=false;}}
   function onRespawn(a){if(!a||a.id!==state.id||!game.player)return;game.player.x=a.x;game.player.y=a.y;game.player.vx=0;game.player.vy=0;game.player._takingDamage=false;updateCamera();game.score=a.score;game.growthScore=a.growthScore;game.deathAnim=null;game.invulnUntil=game.time+1.25;updateHUD();}
@@ -4845,6 +4851,8 @@ document.getElementById('mpJoinBtn').onclick = ()=>{
   const room=document.getElementById('mpRoomInput').value;
   Multiplayer.connect(room);
   Multiplayer.close();
+  document.getElementById('mpRoomInput')?.blur();
+  document.getElementById('fishNameInput')?.blur();
   startGame();
 };
 document.getElementById('startBtn').onclick = startGame;
