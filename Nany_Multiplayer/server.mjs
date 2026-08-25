@@ -255,12 +255,30 @@ function handlePvP(room) {
         // Respawn totalmente aleatorio en el primer mapa: puede aparecer
         // en cualquier zona del océano, incluyendo arriba/abajo/izquierda/derecha
         // y las cuatro esquinas. Solo dejamos un margen para que no nazca fuera.
-        victim.x = clamp(Math.random() * WORLD_W, 200, WORLD_W - 200);
-        victim.y = clamp(Math.random() * WORLD_H, 200, WORLD_H - 200);
+        const respawn = randomSpawn(room);
+        victim.x = respawn.x;
+        victim.y = respawn.y;
+        victim.angle = Math.random() * Math.PI * 2;
         send(victim.ws, { type: 'respawn', player: publicPlayer(victim), room: victim.room });
       }, 1800);
     }
   }
+}
+
+function randomSpawn(room){
+  let x = 6000, y = 6000;
+  for(let tries=0; tries<20; tries++){
+    x = Math.random() * (WORLD_W - 160) + 80;
+    y = Math.random() * (WORLD_H - 160) + 80;
+    let safe = true;
+    if(room){
+      for(const p of room.values()) {
+        if(Math.hypot(x-p.x, y-p.y) < 900){ safe = false; break; }
+      }
+    }
+    if(safe) break;
+  }
+  return {x,y};
 }
 
 wss.on('connection', (ws) => {
@@ -300,6 +318,10 @@ wss.on('connection', (ws) => {
       client.mode = room.mode;
       client.team = assignTeam(room, msg.team);
       client.teamName = teamName(client.team);
+      const spawn = randomSpawn(room);
+      client.x = spawn.x;
+      client.y = spawn.y;
+      client.angle = Math.random() * Math.PI * 2;
       client.joined = true;
       room.set(id, client);
       send(ws, {
@@ -310,6 +332,7 @@ wss.on('connection', (ws) => {
         mode: room.mode,
         team: client.team,
         teamName: client.teamName,
+        player: publicPlayer(client),
         players: [...room.values()].filter(p => p.id !== id).map(publicPlayer)
       });
       broadcastRoom(room, { type: 'player_joined', player: publicPlayer(client), room: roomName }, id);
