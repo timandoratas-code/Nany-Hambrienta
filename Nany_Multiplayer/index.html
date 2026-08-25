@@ -1146,6 +1146,7 @@ function flashSaveNotice(){
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 let W=window.innerWidth, H=window.innerHeight, DPR=Math.min(window.devicePixelRatio||1,2);
+const IS_MOBILE_DEVICE = () => window.matchMedia?.('(max-width:700px), (pointer:coarse)').matches ?? (W<=700);
 
 /* =========================================================
    WORLD + CAMERA
@@ -1179,7 +1180,8 @@ function resize(){
   const vv = window.visualViewport;
   W = Math.round(vv ? vv.width : window.innerWidth);
   H = Math.round(vv ? vv.height : window.innerHeight);
-  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  // En móvil limitamos la resolución interna para evitar congelamientos por GPU/memoria.
+  DPR = IS_MOBILE_DEVICE() ? 1 : Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = Math.max(1, Math.round(W*DPR));
   canvas.height = Math.max(1, Math.round(H*DPR));
   canvas.style.width=W+'px';
@@ -3122,7 +3124,7 @@ function update(dt){
     else{ensureLavaThreats();updateGemSpawning(dt);const cfg=levelCfg();game.spawnTimer-=dt;if(game.spawnTimer<=0&&game.entities.length<420){const batch=game.entities.length<180?(game.level===1&&game.level2Time<30?4:5):3;const edgeChance=(game.level===0&&game.score<1000)?.30:.08;for(let i=0;i<batch;i++)spawnFish(Math.random()<edgeChance);game.spawnTimer=cfg.spawnRate*rand(.7,1.15);}ensurePlankton();ensureFoodAroundPlayer();ensureCornerThreats(dt);ensureEcologyMix();rebalanceFishThreats();ensureEcologyMix();}
     for(let i=game.entities.length-1;i>=0;i--){const e=game.entities[i];if(!Number.isFinite(e.x)||!Number.isFinite(e.y)||!Number.isFinite(e.vx)||!Number.isFinite(e.vy)){game.entities.splice(i,1);continue;}updateEntity(e,dt);}
     updatePet(dt);if(!game.player._takingDamage)handleCollisions();
-  }else{updateSharedWorldInterpolation(dt);handleOnlineBossCollision();}
+  }else{handleOnlineBossCollision();}
 
   for(let i=game.particles.length-1;i>=0;i--){
     const pt = game.particles[i];
@@ -3241,7 +3243,7 @@ function drawBackground(){
 
 // Generic realistic fish body renderer used by all species,
 // with per-species accent details layered on top.
-function drawFishBody(e, opts){
+function drawFishBody(e, opts, simplify){
   const s = e.size;
   const angle = Math.atan2(e.vy, e.vx) || 0;
   const wob = Math.sin(e.wobble*2.2)*0.08;
@@ -3326,7 +3328,12 @@ function drawFishBody(e, opts){
   ctx.restore();
 
   // scale texture (arcs) for mid/large fish
-  if(!opts.noScales && s > 8){
+  // OPTIMIZACIÓN MÓVIL: este loop dibuja hasta 15 arcos+trazos por pez y es
+  // puramente decorativo (textura de escamas). En móvil, con decenas de
+  // peces en pantalla, era uno de los mayores generadores de llamadas de
+  // canvas por frame. Se omite SOLO cuando simplify=true (móvil), nunca en
+  // escritorio.
+  if(!simplify && !opts.noScales && s > 8){
     ctx.save();
     ctx.globalAlpha = 0.18;
     ctx.strokeStyle = dark;
@@ -3397,6 +3404,9 @@ function drawFishBody(e, opts){
   }
 
   // bioluminescent lure (monster / deep-sea)
+  // OPTIMIZACIÓN MÓVIL: shadowBlur es una de las operaciones de canvas más
+  // costosas en GPUs móviles. Mantenemos el hilo del anzuelo (barato) pero
+  // en móvil quitamos el resplandor difuminado; en escritorio no cambia nada.
   if(opts.lure){
     const pulse = 0.6+Math.sin(game.time*4)*0.4;
     ctx.save();
@@ -3407,8 +3417,7 @@ function drawFishBody(e, opts){
     ctx.quadraticCurveTo(bodyLen*0.55,-bodyH*1.5, bodyLen*0.62,-bodyH*1.7);
     ctx.stroke();
     ctx.fillStyle = `rgba(255,230,150,${0.5+pulse*0.4})`;
-    ctx.shadowColor = '#ffe696';
-    ctx.shadowBlur = 12+pulse*10;
+    if(!simplify){ ctx.shadowColor = '#ffe696'; ctx.shadowBlur = 12+pulse*10; }
     ctx.beginPath();
     ctx.arc(bodyLen*0.62,-bodyH*1.7, s*0.14+pulse*1.5, 0, Math.PI*2);
     ctx.fill();
@@ -3420,8 +3429,7 @@ function drawFishBody(e, opts){
   if(opts.fireGlow){
     ctx.save();
     ctx.globalAlpha = 0.5;
-    ctx.shadowColor = '#ff8a3d';
-    ctx.shadowBlur = 18;
+    if(!simplify){ ctx.shadowColor = '#ff8a3d'; ctx.shadowBlur = 18; }
     ctx.fillStyle = 'rgba(255,138,61,0.35)';
     ctx.beginPath();
     ctx.ellipse(-bodyLen*0.4,0, bodyLen*0.35, bodyH*0.5, 0,0,Math.PI*2);
@@ -3511,10 +3519,10 @@ const FISH_RENDER_OPTS = {
   lava:     { fireGlow:true, noScales:true, noGill:true, teeth:true, spikes:true, ugly:true }
 };
 
-function drawFish(e){
+function drawFish(e, simplify){
   if(e.boss){ drawBoss(e); return; }
   const opts = FISH_RENDER_OPTS[e.renderKey || e.type] || {};
-  drawFishBody(e, opts);
+  drawFishBody(e, opts, simplify);
 }
 
 function drawBoss(e){
@@ -3972,8 +3980,10 @@ function drawDangerGlow(){
 
 const minimap = document.getElementById('minimap');
 const miniCtx = minimap.getContext('2d');
-
+let lastMinimapRender=0;
 function renderMinimap(){
+  if(IS_MOBILE_DEVICE() && performance.now()-lastMinimapRender<120) return;
+  lastMinimapRender=performance.now();
   if(!game.player){
     miniCtx.clearRect(0,0,minimap.width,minimap.height);
     return;
@@ -4005,7 +4015,7 @@ function renderMinimap(){
   miniCtx.strokeRect(Math.max(0,px-2),Math.max(0,py-2),4,4);
 }
 
-function drawWorldGrid(){
+function drawWorldGrid(mobile){
   // Cuadrícula anclada al MUNDO: al nadar, las líneas se desplazan
   // respecto a la pantalla y hacen evidente que la cámara está recorriendo
   // un espacio grande. Es deliberadamente tenue para no competir con los peces.
@@ -4050,15 +4060,20 @@ function drawWorldGrid(){
 
   // Brillo ambiental muy sutil en el centro de cada celda para que el fondo
   // no se vea plano, manteniendo el estilo oscuro del abismo.
-  const glow = ctx.createRadialGradient(
-    camera.x + W/2, camera.y + H/2, 0,
-    camera.x + W/2, camera.y + H/2, Math.max(W,H)*0.72
-  );
-  glow.addColorStop(0,'rgba(77,255,240,0.018)');
-  glow.addColorStop(0.65,'rgba(77,255,240,0.006)');
-  glow.addColorStop(1,'rgba(77,255,240,0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(camera.x, camera.y, W/getViewZoom(), H/getViewZoom());
+  // OPTIMIZACIÓN MÓVIL: este gradiente cubre toda la pantalla y se creaba
+  // desde cero en cada frame; su efecto visual es casi imperceptible
+  // (alpha 0.018 máximo). Se omite solo en móvil; en escritorio se ve igual.
+  if(!mobile){
+    const glow = ctx.createRadialGradient(
+      camera.x + W/2, camera.y + H/2, 0,
+      camera.x + W/2, camera.y + H/2, Math.max(W,H)*0.72
+    );
+    glow.addColorStop(0,'rgba(77,255,240,0.018)');
+    glow.addColorStop(0.65,'rgba(77,255,240,0.006)');
+    glow.addColorStop(1,'rgba(77,255,240,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(camera.x, camera.y, W/getViewZoom(), H/getViewZoom());
+  }
   ctx.restore();
 }
 
@@ -4077,22 +4092,32 @@ function render(){
     ctx.scale(z,z);
     ctx.translate(-(camera.x + W/(2*z)), -(camera.y + H/(2*z)));
 
+    const mobile = IS_MOBILE_DEVICE();
+
     // La cuadrícula vive en coordenadas del mundo, no de la pantalla.
     // Por eso se mueve de forma natural cuando el jugador nada.
-    drawWorldGrid();
+    drawWorldGrid(mobile);
     drawDangerGlow();
 
-    const viewMargin = 220 / z;
-    const viewLeft = camera.x - viewMargin;
-    const viewTop = camera.y - viewMargin;
-    const viewRight = camera.x + W / z + viewMargin;
-    const viewBottom = camera.y + H / z + viewMargin;
-    for(const e of game.entities){
-      const r = Math.max(10, Number(e.size)||10);
-      const x = e.renderX ?? e.x;
-      const y = e.renderY ?? e.y;
-      if(x+r<viewLeft || x-r>viewRight || y+r<viewTop || y-r>viewBottom) continue;
-      if(e.coin) drawCoin({...e,x,y}); else if(e.gemFish) drawGemFish({...e,x,y}); else drawFish({...e,x,y});
+    const viewW = W / z, viewH = H / z;
+    const margin = mobile ? 180 : 320;
+    const minX = camera.x - margin, maxX = camera.x + viewW + margin;
+    const minY = camera.y - margin, maxY = camera.y + viewH + margin;
+    let visible = game.entities.filter(e => e.x >= minX && e.x <= maxX && e.y >= minY && e.y <= maxY);
+    // En móvil no procesamos cientos de entidades fuera de pantalla.
+    // Bajado de 90 a 65: cada pez de más en móvil cuesta ~2 gradientes +
+    // ~10-25 llamadas de canvas, así que este número pesa mucho en el
+    // congelamiento. Sigue siendo un océano lleno de vida, solo prioriza
+    // las entidades más cercanas al jugador.
+    const MOBILE_ENTITY_CAP = 65;
+    if(mobile && visible.length > MOBILE_ENTITY_CAP){
+      visible.sort((a,b)=>((a.x-game.player.x)**2+(a.y-game.player.y)**2)-((b.x-game.player.x)**2+(b.y-game.player.y)**2));
+      visible = visible.slice(0,MOBILE_ENTITY_CAP);
+    } else if(!mobile){
+      visible.sort((a,b)=>a.size-b.size);
+    }
+    for(const e of visible){
+      if(e.coin) drawCoin(e); else if(e.gemFish) drawGemFish(e); else drawFish(e, mobile);
     }
 
     if(!game.deathAnim || !game.deathAnim.active) drawPlayer();
@@ -4498,35 +4523,9 @@ function openShop(){
   renderShop();
 }
 
-function mapServerEntity(r){return {...r,behavior:r.ecologyRole==='predator'?'aggro':'passive',wobble:0,finPhase:0,life:0,renderX:Number(r.x)||0,renderY:Number(r.y)||0,targetX:Number(r.x)||0,targetY:Number(r.y)||0,_chasing:false,_attackCooldown:0,_wanderTimer:999999,_wanderAngle:Math.atan2(r.vy||0,r.vx||1),_vulnerableTail:false,_hitCooldown:0};}
-function syncSharedWorld(world){
-  if(!Array.isArray(world)) return;
-  const incoming=new Set();
-  const byId=new Map();
-  for(const e of game.entities) if(e && e.id) byId.set(e.id,e);
-  for(const r of world){
-    if(!r || !r.id) continue;
-    incoming.add(r.id);
-    const e=byId.get(r.id);
-    if(e){
-      e.type=r.type; e.renderKey=r.renderKey; e.size=r.size; e.power=r.power; e.points=r.points; e.color=r.color; e.speed=r.speed;
-      e.x=Number(r.x)||0; e.y=Number(r.y)||0; e.vx=Number(r.vx)||0; e.vy=Number(r.vy)||0; e.angle=Number(r.angle)||0; e.hazard=r.hazard||null; e.ecologyRole=r.ecologyRole||null;
-      e.boss=!!r.boss; e.bossType=r.bossType||null; e.gemFish=!!r.gemFish; e.coin=!!r.coin; e.special=r.special||null; e.bossHits=r.bossHits||0;
-      e.targetX=e.x; e.targetY=e.y;
-    }else{
-      game.entities.push(mapServerEntity(r));
-    }
-  }
-  for(let i=game.entities.length-1;i>=0;i--){if(!incoming.has(game.entities[i].id)) game.entities.splice(i,1);}
-  game.entities.sort((a,b)=>(a.size||0)-(b.size||0));
-}
-function updateSharedWorldInterpolation(dt){
-  for(const e of game.entities){
-    e.renderX=lerp(e.renderX??e.x,e.targetX??e.x,Math.min(1,dt*8));
-    e.renderY=lerp(e.renderY??e.y,e.targetY??e.y,Math.min(1,dt*8));
-  }
-}
-function removeSharedEntity(id){const i=game.entities.findIndex(e=>e.id===id);if(i>=0)game.entities.splice(i,1);}
+function mapServerEntity(e){return {...e,behavior:e.ecologyRole==='predator'?'aggro':'passive',wobble:0,finPhase:0,life:0,_chasing:false,_attackCooldown:0,_wanderTimer:999999,_wanderAngle:Math.atan2(e.vy||0,e.vx||1),_vulnerableTail:false,_hitCooldown:0};}
+function syncSharedWorld(world){if(!Array.isArray(world))return;const old=new Map(game.entities.map(e=>[e.id,e]));game.entities=world.map(r=>{const e=mapServerEntity(r),o=old.get(r.id);if(o){e.renderX=o.renderX;e.renderY=o.renderY;}return e;});}
+function removeSharedEntity(id){game.entities=game.entities.filter(e=>e.id!==id);}
 /* =========================================================
    MULTIPLAYER
    -----------------------------------------------------------
@@ -4595,7 +4594,6 @@ const Multiplayer = (()=>{
     room=normalizeRoom(room);
     if(state.socket){ try{state.socket.close();}catch(_){} }
     state.room=room; state.connected=false; state.id=null; state.players.clear();
-    game.entities=[];
     setStatus('Conectando…');
     let ws;
     try{ ws=new WebSocket(socketUrl()); }catch(err){ setStatus('No se pudo abrir la conexión'); return false; }
@@ -4622,7 +4620,6 @@ const Multiplayer = (()=>{
           game.player.vx=0; game.player.vy=0;
           updateCamera();
         }
-        if(msg.world) syncSharedWorld(msg.world);
         updateModeUI(state.mode);
         (msg.players||[]).forEach(p=>{
           if(!p || p.id===state.id) return;
@@ -4644,7 +4641,6 @@ const Multiplayer = (()=>{
           });
         });
         for(const id of state.players.keys()) if(!incoming.has(id)) state.players.delete(id);
-        if(msg.worldSync) syncSharedWorld(msg.worldSync);
         state.mode=msg.mode||state.mode; updateModeUI(state.mode);
         setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(msg.population||state.players.size+1)}`,true);
       }else if(msg.type==='player_joined'){
@@ -4815,7 +4811,19 @@ const Multiplayer = (()=>{
 
   function handleOnlineBossCollision(){if(!game.player)return;const p=game.player;for(const e of game.entities){if(!e.boss)continue;const t=e.bossType==='shrimp'?{x:e.x-Math.cos(e.angle||0)*e.size*1.12,y:e.y-Math.sin(e.angle||0)*e.size*1.12}:{x:e.x-Math.cos(e.angle||0)*e.size*.92,y:e.y-Math.sin(e.angle||0)*e.size*.92};const r=playerHitbox()+e.size*(e.bossType==='shrimp'?.34:.30);if(Math.hypot(p.x-t.x,p.y-t.y)<=r){Multiplayer.biteBoss(e.id);return;}}}
 
-function update(now){ sendState(now); renderLeaderboard(); }
+// OPTIMIZACIÓN: renderLeaderboard() reconstruye innerHTML + ordena un array
+// cada vez que se llama. Se invocaba en CADA frame (hasta 60-90 veces/seg),
+// lo cual es trabajo de DOM totalmente innecesario ya que el marcador solo
+// necesita verse actualizado unas pocas veces por segundo. setStatus()
+// sigue llamándola directamente para reflejar cambios de conexión al instante.
+let lastLeaderboardRenderAt = 0;
+function update(now){
+  sendState(now);
+  if(now - lastLeaderboardRenderAt > 200){
+    lastLeaderboardRenderAt = now;
+    renderLeaderboard();
+  }
+}
   function open(room){
     document.getElementById('startScreen').classList.add('hidden');
     document.getElementById('shopScreen').classList.add('hidden');
@@ -5007,7 +5015,23 @@ if(window.visualViewport){
 /* =========================================================
    MAIN LOOP
    ========================================================= */
+// OPTIMIZACIÓN MÓVIL (congelamiento): en escritorio el juego sigue sin límite
+// de FPS, igual que siempre. En móvil, limitamos el trabajo real de
+// update()+render() a ~30 FPS. requestAnimationFrame se sigue llamando en
+// cada tick (por eso no se "traba" la animación del navegador), pero los
+// frames de más se descartan ANTES de tocar el canvas o la física, que es
+// donde estaba el costo real. dt sigue calculándose con el tiempo real
+// transcurrido, así que el movimiento no cambia de velocidad.
+const MOBILE_FRAME_INTERVAL_MS = 1000/30;
+let lastMobileFrameT = 0;
 function frame(now){
+  if(IS_MOBILE_DEVICE()){
+    if(now - lastMobileFrameT < MOBILE_FRAME_INTERVAL_MS){
+      requestAnimationFrame(frame);
+      return;
+    }
+    lastMobileFrameT = now;
+  }
   const dt = Math.min((now-lastT)/1000, 0.05);
   lastT = now;
   update(dt);
