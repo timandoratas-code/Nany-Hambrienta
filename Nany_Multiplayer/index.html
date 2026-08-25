@@ -775,6 +775,31 @@
     #minimap{ width:48px !important; height:48px !important; top:36px !important; }
   }
 
+  /* OPTIMIZACIÓN MÓVIL (congelamiento): backdrop-filter:blur() obliga al
+     navegador a recomponer el desenfoque de TODO lo que hay detrás del
+     elemento en cada pintado de pantalla. Con el canvas del juego
+     repintándose 30-60 veces por segundo justo debajo, cada panel del HUD
+     con blur (marcador, minimapa, estado/leaderboard multijugador) fuerza
+     ese recálculo entero cada frame. En Safari/Chrome de iOS y Android esto
+     es una de las causas más comunes de congelamiento TOTAL de la pestaña,
+     a menudo peor que el propio dibujo del canvas.
+     Aquí quitamos el blur SOLO en móvil (pointer:coarse o viewport chico) y
+     lo compensamos con un fondo un poco más opaco para que los paneles
+     sigan siendo legibles. En escritorio no cambia nada. */
+  @media (pointer:coarse), (max-width:700px){
+    .hud-pill,
+    .mp-hud-status,
+    .mp-leaderboard,
+    #minimap{
+      backdrop-filter:none !important;
+      -webkit-backdrop-filter:none !important;
+    }
+    .hud-pill{ background:rgba(4,20,31,0.94); }
+    .mp-hud-status{ background:rgba(4,20,31,0.92); }
+    .mp-leaderboard{ background:rgba(4,20,31,0.92); }
+    #minimap{ background:rgba(2,11,20,0.94); }
+  }
+
 </style>
 </head>
 <body>
