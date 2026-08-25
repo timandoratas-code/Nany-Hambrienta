@@ -203,7 +203,7 @@
   .mp-leaderboard .lb-row{display:flex;justify-content:space-between;gap:8px;color:var(--ink-light);white-space:nowrap;}
   .mp-leaderboard .lb-row.me{color:#fff;font-weight:900;}
   .mp-leaderboard .lb-left{overflow:hidden;text-overflow:ellipsis;}
-  @media (max-width:700px){.mp-hud-status{left:auto;right:8px;top:auto;bottom:18px;font-size:8.5px;padding:4px 7px;max-width:180px;}.mp-leaderboard{right:8px;top:158px;bottom:auto;width:150px;font-size:8.5px;padding:6px 8px;}}
+  @media (max-width:700px){.mp-hud-status{left:auto;right:8px;top:auto;bottom:8px;font-size:8.5px;padding:5px 8px;max-width:180px;z-index:30;}.mp-leaderboard{right:8px;top:162px;bottom:auto;width:150px;font-size:8.5px;padding:6px 8px;z-index:30;}}
   @media (max-height:520px) and (orientation:landscape){.mp-hud-status{top:auto;left:auto;right:8px;bottom:8px;font-size:8px;}.mp-leaderboard{top:108px;right:8px;width:138px;font-size:8px;}}
   @media (min-width:701px){.mp-hud-status{right:18px;left:auto;top:246px;}.mp-leaderboard{right:18px;left:auto;top:290px;width:220px;}}
   @media(max-width:600px){.mp-modes{grid-template-columns:1fr;}.mp-mode{padding:10px;}}
@@ -374,6 +374,7 @@
   .dev-code:focus{border-color:var(--bio-cyan);}
   .dev-status{min-height:20px;font-size:11px;color:var(--ink-dim);}
   #minimap{position:absolute;right:18px;top:66px;width:170px;height:170px;border:1px solid rgba(77,255,240,.2);border-radius:12px;background:rgba(2,11,20,.72);z-index:9;pointer-events:none;backdrop-filter:blur(5px);}
+  #mpArrowLayer{position:absolute;inset:0;width:100%;height:100%;z-index:30;pointer-events:none;}
   @media (max-width:520px){#minimap{width:125px;height:125px;top:62px;right:10px;}}
 
   .row{display:flex;gap:12px;flex-wrap:wrap;}
@@ -814,6 +815,7 @@
     <div id="sprintBar"><div id="sprintFill"></div></div>
   </div>
   <canvas id="minimap" width="170" height="170" aria-label="Minimapa"></canvas>
+  <canvas id="mpArrowLayer" aria-hidden="true"></canvas>
   <div id="multiplayerStatus" class="mp-hud-status hidden">EQUIPOS · SALA ABISMO01 · 1/8</div>
   <div id="mpLeaderboard" class="mp-leaderboard hidden" aria-live="polite"></div>
   <div id="saveNotice">Progreso guardado</div>
@@ -4698,53 +4700,67 @@ const Multiplayer = (()=>{
       ctx.restore();
     }
 
-    // Flechas de localización: apuntan de forma estable al borde visible más cercano.
+    // Las flechas se dibujan en una capa HTML/canvas superior al HUD.
+    renderArrowLayer();
     ctx.save();
-    ctx.setTransform(1,0,0,1,0,0);
-    const isMobile = w <= 700 || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
-    const edge = isMobile ? Math.max(42, Math.min(68, Math.min(w,h)*0.085)) : Math.max(42, Math.min(70, Math.min(w,h)*0.075));
-    const safeTop = isMobile ? 18 : 94;
-    const safeBottom = isMobile ? 18 : 82;
-    const safeLeft = 18;
-    const safeRight = isMobile ? 18 : 250;
-    const cx=w/2, cy=h/2;
-    const left=Math.max(edge,safeLeft), right=Math.max(left+1,w-safeRight);
-    const top=Math.max(edge,safeTop), bottom=Math.max(top+1,h-safeBottom);
+    ctx.restore();
+    ctx.restore();
+    ctx.restore();
+  }
+
+  function renderArrowLayer(){
+    const arrowCanvas=document.getElementById('mpArrowLayer');
+    if(!arrowCanvas) return;
+    const aw=Math.max(1,Math.floor(W*DPR)), ah=Math.max(1,Math.floor(H*DPR));
+    if(arrowCanvas.width!==aw) arrowCanvas.width=aw;
+    if(arrowCanvas.height!==ah) arrowCanvas.height=ah;
+    const ac=arrowCanvas.getContext('2d');
+    ac.setTransform(DPR,0,0,DPR,0,0);
+    ac.clearRect(0,0,W,H);
+    if(!state.connected) return;
+
+    const z=getViewZoom();
+    const isMobile = aw <= 700 || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
+    const margin = isMobile ? 26 : 32;
+    const cx=aw/2, cy=ah/2;
+    const left=margin, right=aw-margin, top=margin, bottom=ah-margin;
+
     for(const p of state.players.values()){
       if(!p.alive) continue;
       const sx=(p.renderX-camera.x)*z;
       const sy=(p.renderY-camera.y)*z;
-      if(sx>=edge && sx<=w-edge && sy>=edge && sy<=h-edge) continue;
+      if(sx>=left && sx<=right && sy>=top && sy<=bottom) continue;
+
       const dx=sx-cx, dy=sy-cy;
       const len=Math.hypot(dx,dy)||1;
       const ux=dx/len, uy=dy/len;
-      const tx=ux>0 ? (right-cx)/ux : ux<0 ? (left-cx)/ux : Infinity;
-      const ty=uy>0 ? (bottom-cy)/uy : uy<0 ? (top-cy)/uy : Infinity;
-      const positiveX = tx>0 ? tx : Infinity;
-      const positiveY = ty>0 ? ty : Infinity;
-      const t=Math.min(positiveX,positiveY);
-      let ax=cx+ux*t, ay=cy+uy*t;
-      ax=Math.max(left,Math.min(right,ax));
-      ay=Math.max(top,Math.min(bottom,ay));
+      let tX=Infinity, tY=Infinity;
+      if(ux>0) tX=(right-cx)/ux; else if(ux<0) tX=(left-cx)/ux;
+      if(uy>0) tY=(bottom-cy)/uy; else if(uy<0) tY=(top-cy)/uy;
+      const t=Math.min(tX>0?tX:Infinity,tY>0?tY:Infinity);
+      const ax=cx+ux*t, ay=cy+uy*t;
       const isTeam=state.mode==='teams';
       const pc=isTeam ? (p.team==='A' ? '#5ea7ff' : '#ff6a6a') : '#a084ff';
-      ctx.save();
-      ctx.translate(ax,ay);
-      ctx.rotate(Math.atan2(dy,dx));
-      ctx.fillStyle=pc; ctx.shadowColor=pc; ctx.shadowBlur=12;
-      ctx.beginPath();
-      ctx.moveTo(15,0); ctx.lineTo(-8,-8); ctx.lineTo(-3,0); ctx.lineTo(-8,8); ctx.closePath(); ctx.fill();
-      ctx.restore();
-      ctx.save();
-      ctx.font='700 9px Space Mono, monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.lineWidth=3; ctx.strokeStyle='rgba(2,11,20,.95)'; ctx.fillStyle=pc;
-      const label=state.mode==='teams' ? (p.teamName||p.name||'Jugador') : (p.name||'Jugador');
-      const ly=ay<40 ? ay+20 : ay>h-40 ? ay-20 : ay;
-      ctx.strokeText(label,ax,ly); ctx.fillText(label,ax,ly);
-      ctx.restore();
+      const size=isMobile?14:16;
+
+      ac.save();
+      ac.translate(ax,ay);
+      ac.rotate(Math.atan2(dy,dx));
+      ac.globalAlpha=.98;
+      ac.shadowColor=pc; ac.shadowBlur=isMobile?18:14;
+      ac.fillStyle=pc;
+      ac.beginPath();
+      ac.moveTo(size*1.55,0);
+      ac.lineTo(-size*.75,-size*.72);
+      ac.lineTo(-size*.25,0);
+      ac.lineTo(-size*.75,size*.72);
+      ac.closePath();
+      ac.fill();
+      ac.strokeStyle='rgba(2,11,20,.95)';
+      ac.lineWidth=2.5;
+      ac.stroke();
+      ac.restore();
     }
-    ctx.restore();
-    ctx.restore();
   }
 
   function onPlayerEaten(msg){
