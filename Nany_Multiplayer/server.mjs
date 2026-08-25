@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { extname, join, normalize, sep } from 'node:path';
+import { extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import crypto from 'node:crypto';
@@ -119,8 +119,14 @@ const http = createServer(async (req, res) => {
       res.end(data);
       return;
     }
-    const filePath = normalize(join(__dirname, pathname));
-    if (!filePath.startsWith(__dirname + sep)) {
+    if (pathname === '/favicon.ico') {
+      res.writeHead(204, {'Cache-Control':'no-store'});
+      res.end();
+      return;
+    }
+    const filePath = join(__dirname, pathname.replace(/^\/+/, ''));
+    const rel = relative(__dirname, filePath);
+    if (rel.startsWith('..') || rel.includes('\0')) {
       res.writeHead(403); res.end('Forbidden'); return;
     }
     const data = await readFile(filePath);
