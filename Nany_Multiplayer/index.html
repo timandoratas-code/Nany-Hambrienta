@@ -2451,6 +2451,11 @@ function keyboardActive(){
 }
 
 window.addEventListener('keydown', e=>{
+  const target=e.target;
+  const typingTarget=target && (target.tagName==='INPUT' || target.tagName==='TEXTAREA' || target.isContentEditable);
+  if(typingTarget){
+    return;
+  }
   if(e.code === 'Space'){
     e.preventDefault();
     startSprint();
@@ -2467,6 +2472,11 @@ window.addEventListener('keydown', e=>{
 });
 
 window.addEventListener('keyup', e=>{
+  const target=e.target;
+  const typingTarget=target && (target.tagName==='INPUT' || target.tagName==='TEXTAREA' || target.isContentEditable);
+  if(typingTarget){
+    return;
+  }
   if(e.code === 'Space'){
     e.preventDefault();
     stopSprint();
