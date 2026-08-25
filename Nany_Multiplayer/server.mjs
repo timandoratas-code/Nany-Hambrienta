@@ -11,380 +11,75 @@ const HOST = process.env.HOST || '0.0.0.0';
 const WORLD_W = 12000;
 const WORLD_H = 12000;
 const MAX_PLAYERS_PER_ROOM = 8;
-const MAX_MESSAGE_BYTES = 16 * 1024;
+const MAX_MESSAGE_BYTES = 64 * 1024;
 const TICK_MS = 50;
 const STATE_RATE_MS = 40;
+const WORLD_BROADCAST_MS = 100;
 const MAX_CLIENT_SPEED = 8.5;
 const PVP_REACH_FACTOR = 1.08;
 const PVP_POWER_MARGIN = 1.06;
-
+const LEVEL_THRESHOLDS = [0, 1000, 3000, 6000, 10000, 15000];
 const rooms = new Map();
 const clients = new Map();
 
-const LEVEL_THRESHOLDS = [0, 1000, 3000, 6000, 10000, 15000];
-
-function safeRoom(value) {
-  const room = String(value ?? '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 16);
-  return room || 'ABISMO01';
+const FISH = [
+  {key:'plankton',renderKey:'plankton',size:4,power:0,points:4,color:'#8fffb0',speed:.95,prey:true,weight:4},
+  {key:'minnow_small',renderKey:'minnow',size:8,power:1,points:8,color:'#bfe6ff',speed:1.2,prey:true,weight:7},
+  {key:'minnow_big',renderKey:'minnow',size:8,power:1,points:12,color:'#bfe6ff',speed:1.15,predator:true,weight:4},
+  {key:'green_small',renderKey:'green',size:11,power:2,points:13,color:'#39ff6a',speed:1.55,prey:true,weight:6},
+  {key:'green_big',renderKey:'green',size:11,power:2,points:19,color:'#39ff6a',speed:1.48,predator:true,weight:3},
+  {key:'piranha_small',renderKey:'piranha',size:14,power:3,points:21,color:'#ff8a3d',speed:1.90,prey:true,weight:5},
+  {key:'piranha_big',renderKey:'piranha',size:14,power:3,points:30,color:'#ff8a3d',speed:1.82,predator:true,weight:3},
+  {key:'stick_small',renderKey:'stick',size:17,power:4,points:29,color:'#e0c66a',speed:1.45,prey:true,weight:4},
+  {key:'stick_big',renderKey:'stick',size:17,power:4,points:40,color:'#e0c66a',speed:1.40,predator:true,weight:2},
+  {key:'rival_small',renderKey:'rival',size:21,power:5,points:40,color:'#a084ff',speed:1.75,prey:true,weight:3},
+  {key:'rival_big',renderKey:'rival',size:21,power:5,points:55,color:'#a084ff',speed:1.68,predator:true,weight:2},
+  {key:'ray_small',renderKey:'ray',size:30,power:7,points:70,color:'#6d8796',speed:2.05,prey:true,weight:2},
+  {key:'ray_big',renderKey:'ray',size:30,power:7,points:90,color:'#6d8796',speed:1.98,predator:true,weight:2},
+  {key:'monster_small',renderKey:'monster',size:43,power:9,points:115,color:'#8d2638',speed:1.80,prey:true,weight:1},
+  {key:'monster_big',renderKey:'monster',size:43,power:9,points:145,color:'#8d2638',speed:1.72,predator:true,weight:2},
+  {key:'poison',renderKey:'poison',size:10,power:0,points:-100,color:'#c23bff',speed:1.0,hazard:'poison',weight:1},
+  {key:'lava',renderKey:'lava',size:18,power:99,points:0,color:'#ff3b3b',speed:2.55,hazard:'lava',predator:true,weight:1}
+];
+const byKey = new Map(FISH.map(f=>[f.key,f]));
+function safeRoom(v){const s=String(v??'').trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'').slice(0,16);return s||'ABISMO01';}
+function safeMode(v){const s=String(v??'ffa').toLowerCase();return ['teams','ffa','coop'].includes(s)?s:'ffa';}
+function safeName(v){const s=String(v??'Nany').trim().slice(0,18);return s||'Nany';}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function playerPower(score){const s=Math.max(0,score);if(s<100)return 1;if(s<250)return 2;if(s<500)return 3;if(s<900)return 4;if(s<1500)return 5;if(s<2500)return 6;if(s<4000)return 7;if(s<6000)return 8;if(s<9000)return 9;return 10;}
+function computeLevel(score){let l=1;for(let i=0;i<LEVEL_THRESHOLDS.length;i++)if(score>=LEVEL_THRESHOLDS[i])l=i+1;return l;}
+function playerRadius(score){const x=Math.max(0,score);if(x<200)return 11+x*.01;if(x<500)return 13+(x-200)*.02;if(x<1000)return 19+(x-500)*.025;if(x<2500)return 31.5+(x-1000)*.018;if(x<4500)return 58.5+(x-2500)*.014;if(x<7000)return 86.5+(x-4500)*.011;if(x<10000)return 114+(x-7000)*.009;return 141+Math.min(35,(x-10000)*.006);}
+function weightedFish(maxPower=10){const pool=FISH.filter(f=>!f.hazard && (f.prey || f.predator) && f.power<=Math.max(1,maxPower+2));let total=pool.reduce((s,f)=>s+f.weight,0);let r=Math.random()*total;for(const f of pool){r-=f.weight;if(r<=0)return f;}return pool[0];}
+function randomPos(margin=200){return {x:margin+Math.random()*(WORLD_W-margin*2),y:margin+Math.random()*(WORLD_H-margin*2)};}
+function rand(a,b){return a+Math.random()*(b-a);}
+function roomFor(name){let r=rooms.get(name);if(!r){r=new Map();r.roomId=name;r.mode='ffa';r.round=1;r.world={entities:[],nextId:1,worldTime:0,bossStage:0,lastBroadcast:0};rooms.set(name,r);}return r;}
+function publicPlayer(p){return {id:p.id,name:p.name,x:p.x,y:p.y,angle:p.angle,score:p.score,growthScore:p.growthScore,level:p.level,radius:p.radius,alive:p.alive,power:p.power,sprinting:p.sprinting,deaths:p.deaths,team:p.team||null,teamName:p.teamName||null};}
+function publicEntity(e){return {id:e.id,type:e.type,renderKey:e.renderKey,size:e.size,power:e.power,points:e.points,color:e.color,speed:e.speed,x:e.x,y:e.y,vx:e.vx,vy:e.vy,angle:e.angle,hazard:e.hazard||null,ecologyRole:e.ecologyRole||null,boss:!!e.boss,bossType:e.bossType||null,gemFish:!!e.gemFish,coin:!!e.coin,special:e.special||null};}
+function send(ws,p){if(ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(p));}
+function broadcastRoom(room,p,exceptId=null){for(const c of room.values())if(c.id!==exceptId)send(c.ws,p);}
+function spawnWorldEntity(room, forceType=null, forcedPos=null){const f=forceType||weightedFish(Math.max(...[...room.values()].map(p=>p.power||1),1));const pos=forcedPos||randomPos(180);const predator=!!f.predator||f.hazard==='lava';const sizeBase=f.size;const mul=f.prey?rand(.55,.9):predator?rand(1.05,1.8):rand(.8,1.2);const a=rand(0,Math.PI*2);const e={id:`e${room.world.nextId++}`,type:f.key,renderKey:f.renderKey,size:sizeBase*mul,baseSize:sizeBase,power:f.power,points:f.points,color:f.color,speed:f.speed,vx:Math.cos(a)*f.speed*.55,vy:Math.sin(a)*f.speed*.55,angle:a,hazard:f.hazard||null,ecologyRole:f.prey?'prey':predator?'predator':null,wander:rand(0,Math.PI*2),wanderTimer:rand(.4,2),chaseTime:0,attackCooldown:0,x:pos.x,y:pos.y,life:0};room.world.entities.push(e);return e;}
+function ensureWorld(room){if(room.world.entities.length>0)return;for(let i=0;i<175;i++)spawnWorldEntity(room);for(let i=0;i<22;i++)spawnWorldEntity(room,FISH.find(f=>f.key.endsWith('_big')&&f.power>=3));for(let i=0;i<8;i++)spawnWorldEntity(room,byKey.get('plankton'));for(let i=0;i<6;i++)spawnWorldEntity(room,byKey.get('poison'));}
+function spawnBoss(room,type){const exists=room.world.entities.some(e=>e.boss&&e.bossType===type);if(exists)return;const pos=randomPos(1200);const e={id:`boss${room.world.nextId++}`,type:type==='shrimp'?'shrimp_boss':'lava_boss',renderKey:type,size:type==='shrimp'?150:170,power:99,points:0,color:type==='shrimp'?'#f06b37':'#ff3b3b',speed:type==='shrimp'?1.35:1.5,vx:type==='shrimp'?1.1:1.2,vy:0,angle:0,hazard:'boss',ecologyRole:'predator',boss:true,bossType:type,x:pos.x,y:pos.y,life:0,wander:0,wanderTimer:1,chaseTime:0,attackCooldown:0};room.world.entities.push(e);}
+function maybeBoss(room){const ps=[...room.values()];const maxScore=Math.max(0,...ps.map(p=>p.growthScore));if(maxScore>=3000){spawnBoss(room,'lava');}else if(maxScore>=1000){spawnBoss(room,'shrimp');}}
+function updateWorld(room,dt){const world=room.world;world.worldTime+=dt;for(let i=world.entities.length-1;i>=0;i--){const e=world.entities[i];e.life+=dt;if(e.boss){e.x+=e.vx;e.y+=e.vy;e.angle=Math.atan2(e.vy,e.vx);continue;}if(e.attackCooldown>0)e.attackCooldown=Math.max(0,e.attackCooldown-dt);const predator=e.ecologyRole==='predator'||e.hazard==='lava'||e.hazard==='boss';let target=null,td=Infinity;if(predator){for(const p of room.values()){if(!p.alive)continue;const d=dist(e,p);if(d<td){td=d;target=p;}}}
+    if(predator && target && e.attackCooldown<=0 && td<140 && e.chaseTime<=0)e.chaseTime=.99;
+    if(e.chaseTime>0 && target){e.chaseTime=Math.max(0,e.chaseTime-dt);const a=Math.atan2(target.y-e.y,target.x-e.x);e.vx=Math.cos(a)*e.speed;e.vy=Math.sin(a)*e.speed;e.angle=a;}else{e.wanderTimer-=dt;if(e.wanderTimer<=0){e.wanderTimer=rand(1,2.4);e.wander+=rand(-1.1,1.1);}const dx=Math.cos(e.wander)*e.speed*.55,dy=Math.sin(e.wander)*e.speed*.55;e.vx+=(dx-e.vx)*.025;e.vy+=(dy-e.vy)*.025;e.angle=Math.atan2(e.vy,e.vx);}
+    e.x+=e.vx;e.y+=e.vy;if(e.x<90||e.x>WORLD_W-90){e.x=clamp(e.x,90,WORLD_W-90);e.vx*=-1;e.wander=Math.atan2(e.vy,e.vx);}if(e.y<90||e.y>WORLD_H-90){e.y=clamp(e.y,90,WORLD_H-90);e.vy*=-1;e.wander=Math.atan2(e.vy,e.vx);}}
+  maybeBoss(room);
+  if(world.entities.length<180)for(let i=0;i<8;i++)spawnWorldEntity(room);
 }
-function safeMode(value) {
-  const mode = String(value ?? 'ffa').trim().toLowerCase();
-  return ['teams','ffa','coop'].includes(mode) ? mode : 'ffa';
-}
-function safeName(value) {
-  const name = String(value ?? 'Nany').trim().slice(0, 18);
-  return name || 'Nany';
-}
-function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
-function computeLevel(score) {
-  let level = 1;
-  for (let i = 0; i < LEVEL_THRESHOLDS.length; i++) {
-    if (score >= LEVEL_THRESHOLDS[i]) level = i + 1;
-  }
-  return level;
-}
-function playerPower(score) {
-  const s = Math.max(0, score);
-  if (s < 100) return 1;
-  if (s < 250) return 2;
-  if (s < 500) return 3;
-  if (s < 900) return 4;
-  if (s < 1500) return 5;
-  if (s < 2500) return 6;
-  if (s < 4000) return 7;
-  if (s < 6000) return 8;
-  if (s < 9000) return 9;
-  return 10;
-}
-function publicPlayer(p) {
-  return {
-    id: p.id,
-    name: p.name,
-    x: p.x,
-    y: p.y,
-    angle: p.angle,
-    score: p.score,
-    growthScore: p.growthScore,
-    level: p.level,
-    radius: p.radius,
-    alive: p.alive,
-    power: p.power,
-    sprinting: p.sprinting,
-    deaths: p.deaths,
-    team: p.team || null,
-    teamName: p.teamName || null
-  };
-}
-function send(ws, payload) {
-  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
-}
-function broadcastRoom(room, payload, exceptId = null) {
-  for (const p of room.values()) {
-    if (p.id === exceptId) continue;
-    send(p.ws, payload);
-  }
-}
-function getRoom(name) {
-  let room = rooms.get(name);
-  if (!room) {
-    room = new Map();
-    room.roomId = name;
-    room.createdAt = Date.now();
-    room.round = 1;
-    room.mode = room.mode || 'ffa';
-    rooms.set(name, room);
-  }
-  return room;
-}
-
-const http = createServer(async (req, res) => {
-  try {
-    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-    let pathname = decodeURIComponent(url.pathname);
-    if (pathname === '/health') {
-      const payload = JSON.stringify({ok:true,service:'nany-hambrienta-multiplayer',rooms:rooms.size,players:clients.size});
-      res.writeHead(200, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
-      res.end(payload);
-      return;
-    }
-    // Serve the game shell directly. This avoids path-resolution edge cases
-    // when the service is deployed with a custom Render root directory.
-    if (pathname === '/' || pathname === '/index.html') {
-      const data = await readFile(join(__dirname, 'index.html'));
-      res.writeHead(200, {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-store'
-      });
-      res.end(data);
-      return;
-    }
-    if (pathname === '/favicon.ico') {
-      res.writeHead(204, {'Cache-Control':'no-store'});
-      res.end();
-      return;
-    }
-    const filePath = join(__dirname, pathname.replace(/^\/+/, ''));
-    const rel = relative(__dirname, filePath);
-    if (rel.startsWith('..') || rel.includes('\0')) {
-      res.writeHead(403); res.end('Forbidden'); return;
-    }
-    const data = await readFile(filePath);
-    const ext = extname(filePath);
-    const type = ext === '.html' ? 'text/html; charset=utf-8'
-      : ext === '.js' || ext === '.mjs' ? 'text/javascript; charset=utf-8'
-      : ext === '.css' ? 'text/css; charset=utf-8'
-      : 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-store' });
-    res.end(data);
-  } catch (err) {
-    if (err?.code === 'ENOENT') { res.writeHead(404); res.end('Not found'); return; }
-    console.error(err);
-    res.writeHead(500); res.end('Server error');
-  }
-});
-
-const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
-
-http.on('upgrade', (req, socket, head) => {
-  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-  if (url.pathname !== '/ws') { socket.destroy(); return; }
-  wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
-});
-
-function removeClient(client) {
-  clients.delete(client.id);
-  if (!client.joined || !client.room) return;
-  const room = rooms.get(client.room);
-  if (!room) return;
-  room.delete(client.id);
-  broadcastRoom(room, { type: 'player_left', id: client.id, room: client.room });
-  if (room.size === 0) rooms.delete(client.room);
-}
-
-function serverAcceptState(client, msg, now) {
-  if (now - client.lastStateAt < STATE_RATE_MS) return;
-  client.lastStateAt = now;
-
-  const nx = Number(msg.x);
-  const ny = Number(msg.y);
-  const na = Number(msg.angle);
-  const ns = Number(msg.score);
-  const ng = Number(msg.growthScore);
-  const nr = Number(msg.radius);
-
-  if (Number.isFinite(nx) && Number.isFinite(ny)) {
-    const d = Math.hypot(nx - client.x, ny - client.y);
-    const elapsed = Math.max(0.04, (now - client.lastAcceptedAt) / 1000);
-    const maxStep = MAX_CLIENT_SPEED * elapsed + 24;
-    if (d <= maxStep) {
-      client.x = clamp(nx, 0, WORLD_W);
-      client.y = clamp(ny, 0, WORLD_H);
-    } else {
-      // Snap toward the submitted position instead of accepting a teleport.
-      const t = clamp(maxStep / d, 0, 1);
-      client.x += (nx - client.x) * t;
-      client.y += (ny - client.y) * t;
-    }
-  }
-  if (Number.isFinite(na)) client.angle = na;
-  if (Number.isFinite(ns)) client.score = Math.max(client.score, clamp(Math.floor(ns), 0, 1_000_000));
-  if (Number.isFinite(ng)) client.growthScore = Math.max(client.growthScore, clamp(Math.floor(ng), 0, 1_000_000));
-  if (Number.isFinite(nr)) client.radius = clamp(nr, 4, 320);
-  client.power = playerPower(client.growthScore);
-  client.level = computeLevel(client.growthScore);
-  client.alive = msg.alive !== false;
-  client.sprinting = msg.sprinting === true;
-  client.lastAcceptedAt = now;
-}
-
-function assignTeam(room, requested) {
-  if (room.mode !== 'teams') return null;
-  if (requested === 'A' || requested === 'B') return requested;
-  const a = [...room.values()].filter(p => p.team === 'A').length;
-  const b = [...room.values()].filter(p => p.team === 'B').length;
-  return a <= b ? 'A' : 'B';
-}
-function teamName(team) { return team === 'A' ? 'Azul' : team === 'B' ? 'Rojo' : null; }
-function canPvp(room, a, b) {
-  if (room.mode === 'coop') return false;
-  if (room.mode === 'teams' && a.team && b.team && a.team === b.team) return false;
-  return true;
-}
-
-function handlePvP(room) {
-  const players = [...room.values()].filter(p => p.alive);
-  for (let i = 0; i < players.length; i++) {
-    for (let j = i + 1; j < players.length; j++) {
-      const a = players[i], b = players[j];
-      if (!canPvp(room, a, b)) continue;
-      const reach = Math.max(22, (a.radius + b.radius) * 0.84);
-      if (dist(a, b) > reach) continue;
-
-      let eater = null, victim = null;
-      if (a.power >= b.power * PVP_POWER_MARGIN && a.radius >= b.radius * PVP_REACH_FACTOR) { eater = a; victim = b; }
-      else if (b.power >= a.power * PVP_POWER_MARGIN && b.radius >= a.radius * PVP_REACH_FACTOR) { eater = b; victim = a; }
-      if (!eater || !victim || victim._pvpCooldown > Date.now()) continue;
-
-      const now = Date.now();
-      victim._pvpCooldown = now + 2500;
-      victim.alive = false;
-      victim.deaths += 1;
-      eater.score = Math.min(1_000_000, eater.score + Math.max(20, Math.floor(victim.score * 0.12)));
-      eater.growthScore = Math.min(1_000_000, eater.growthScore + Math.max(20, Math.floor(victim.growthScore * 0.12)));
-      eater.power = playerPower(eater.growthScore);
-      eater.level = computeLevel(eater.growthScore);
-
-      const event = {
-        type: 'player_eaten',
-        victimId: victim.id,
-        eaterId: eater.id,
-        eater: publicPlayer(eater),
-        victimScore: victim.score,
-        victimDeaths: victim.deaths
-      };
-      broadcastRoom(room, event);
-
-      setTimeout(() => {
-        if (!clients.has(victim.id)) return;
-        victim.alive = true;
-        victim.score = Math.max(0, Math.floor(victim.score * 0.35));
-        victim.growthScore = victim.score;
-        victim.level = computeLevel(victim.growthScore);
-        victim.power = playerPower(victim.growthScore);
-        // Respawn totalmente aleatorio en el primer mapa: puede aparecer
-        // en cualquier zona del océano, incluyendo arriba/abajo/izquierda/derecha
-        // y las cuatro esquinas. Solo dejamos un margen para que no nazca fuera.
-        const respawn = randomSpawn(room);
-        victim.x = respawn.x;
-        victim.y = respawn.y;
-        victim.angle = Math.random() * Math.PI * 2;
-        send(victim.ws, { type: 'respawn', player: publicPlayer(victim), room: victim.room });
-      }, 1800);
-    }
-  }
-}
-
-function randomSpawn(room){
-  let x = 6000, y = 6000;
-  for(let tries=0; tries<20; tries++){
-    x = Math.random() * (WORLD_W - 160) + 80;
-    y = Math.random() * (WORLD_H - 160) + 80;
-    let safe = true;
-    if(room){
-      for(const p of room.values()) {
-        if(Math.hypot(x-p.x, y-p.y) < 900){ safe = false; break; }
-      }
-    }
-    if(safe) break;
-  }
-  return {x,y};
-}
-
-wss.on('connection', (ws) => {
-  const id = crypto.randomUUID();
-  const client = {
-    id, ws, room: null, joined: false,
-    name: 'Nany', x: 6000, y: 6000, angle: 0,
-    score: 0, growthScore: 0, level: 1, power: 1, radius: 11,
-    alive: true, sprinting: false, deaths: 0, mode: 'ffa', team: null, teamName: null,
-    lastStateAt: 0, lastAcceptedAt: Date.now(), _pvpCooldown: 0
-  };
-  clients.set(id, client);
-
-  ws.on('error', () => {});
-  ws.on('message', (data, isBinary) => {
-    if (isBinary || data.byteLength > MAX_MESSAGE_BYTES) return;
-    let msg;
-    try { msg = JSON.parse(data.toString('utf8')); } catch { return; }
-    if (!msg || typeof msg.type !== 'string') return;
-
-    if (msg.type === 'join') {
-      if (client.joined) return;
-      const roomName = safeRoom(msg.room);
-      const requestedMode = safeMode(msg.mode);
-      const room = getRoom(roomName);
-      if (room.size === 0) room.mode = requestedMode;
-      if (room.mode !== requestedMode) {
-        send(ws, { type: 'error', code: 'MODE_MISMATCH', message: `La sala ya está configurada como ${room.mode}.` });
-        return;
-      }
-      if (room.size >= MAX_PLAYERS_PER_ROOM) {
-        send(ws, { type: 'error', code: 'ROOM_FULL', message: 'Sala llena (máximo 8 jugadores).' });
-        return;
-      }
-      client.room = roomName;
-      client.name = safeName(msg.name);
-      client.mode = room.mode;
-      client.team = assignTeam(room, msg.team);
-      client.teamName = teamName(client.team);
-      const spawn = randomSpawn(room);
-      client.x = spawn.x;
-      client.y = spawn.y;
-      client.angle = Math.random() * Math.PI * 2;
-      client.joined = true;
-      room.set(id, client);
-      send(ws, {
-        type: 'welcome',
-        id,
-        room: roomName,
-        maxPlayers: MAX_PLAYERS_PER_ROOM,
-        mode: room.mode,
-        team: client.team,
-        teamName: client.teamName,
-        player: publicPlayer(client),
-        players: [...room.values()].filter(p => p.id !== id).map(publicPlayer)
-      });
-      broadcastRoom(room, { type: 'player_joined', player: publicPlayer(client), room: roomName }, id);
-      return;
-    }
-
-    if (!client.joined || !client.room) return;
-    const room = rooms.get(client.room);
-    if (!room) return;
-
-    if (msg.type === 'state') {
-      serverAcceptState(client, msg, Date.now());
-      return;
-    }
-    if (msg.type === 'leave') {
-      try { ws.close(); } catch {}
-    }
-  });
-
-  ws.on('close', () => removeClient(client));
-});
-
-const snapshotTimer = setInterval(() => {
-  const now = Date.now();
-  for (const room of rooms.values()) {
-    handlePvP(room);
-    const players = [...room.values()].map(publicPlayer);
-    for (const p of room.values()) {
-      send(p.ws, {
-        type: 'snapshot',
-        serverTime: now,
-        room: room.roomId,
-        players,
-        population: room.size,
-        round: room.round,
-        mode: room.mode
-      });
-    }
-  }
-}, TICK_MS);
-
-function shutdown() {
-  clearInterval(snapshotTimer);
-  for (const c of clients.values()) {
-    try { c.ws.close(1001, 'Servidor cerrando'); } catch {}
-  }
-  http.close(() => process.exit(0));
-}
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
-
-http.listen(PORT, HOST, () => {
-  console.log(`Nany multiplayer server listening on http://${HOST}:${PORT}`);
-  console.log(`WebSocket endpoint: ws://HOST:${PORT}/ws`);
-});
+function canPvp(room,a,b){if(room.mode==='coop')return false;if(room.mode==='teams'&&a.team&&b.team&&a.team===b.team)return false;return true;}
+function handlePvP(room){const players=[...room.values()].filter(p=>p.alive);for(let i=0;i<players.length;i++)for(let j=i+1;j<players.length;j++){const a=players[i],b=players[j];if(!canPvp(room,a,b))continue;const reach=Math.max(22,(a.radius+b.radius)*.84);if(dist(a,b)>reach)continue;let eater=null,victim=null;if(a.power>=b.power*PVP_POWER_MARGIN&&a.radius>=b.radius*PVP_REACH_FACTOR){eater=a;victim=b}else if(b.power>=a.power*PVP_POWER_MARGIN&&b.radius>=a.radius*PVP_REACH_FACTOR){eater=b;victim=a}if(!eater||!victim||victim._pvpCooldown>Date.now())continue;const now=Date.now();victim._pvpCooldown=now+2500;victim.alive=false;victim.deaths++;eater.score=Math.min(1e6,eater.score+Math.max(20,Math.floor(victim.score*.12)));eater.growthScore=Math.min(1e6,eater.growthScore+Math.max(20,Math.floor(victim.growthScore*.12)));eater.power=playerPower(eater.growthScore);eater.level=computeLevel(eater.growthScore);broadcastRoom(room,{type:'player_eaten',victimId:victim.id,eaterId:eater.id,eater:publicPlayer(eater),victimScore:victim.score,victimDeaths:victim.deaths});setTimeout(()=>{if(!clients.has(victim.id))return;victim.alive=true;victim.score=Math.max(0,Math.floor(victim.score*.35));victim.growthScore=victim.score;victim.level=computeLevel(victim.growthScore);victim.power=playerPower(victim.growthScore);const pos=randomPos(200);victim.x=pos.x;victim.y=pos.y;send(victim.ws,{type:'respawn',player:publicPlayer(victim),room:victim.room});},1800);}}
+function handlePvE(room){const players=[...room.values()].filter(p=>p.alive);for(const p of players){for(let i=room.world.entities.length-1;i>=0;i--){const e=room.world.entities[i];const hit=Math.max(18,(p.radius+(e.size||8))*.82);if(Math.hypot(p.x-e.x,p.y-e.y)>hit)continue;if(e.boss||e.hazard==='lava'||e.ecologyRole==='predator'){if((e.power||99)>=p.power||e.boss){p.alive=false;p.deaths++;send(p.ws,{type:'world_player_hit',entity:publicEntity(e)});setTimeout(()=>{if(!clients.has(p.id))return;p.alive=true;const pos=randomPos(200);p.x=pos.x;p.y=pos.y;p.score=Math.max(0,Math.floor(p.score*.35));p.growthScore=p.score;p.power=playerPower(p.growthScore);p.level=computeLevel(p.growthScore);send(p.ws,{type:'respawn',player:publicPlayer(p),room:p.room});},1800);break;}}else if(e.ecologyRole==='prey'&&e.power<p.power){p.score=Math.min(1e6,p.score+Math.max(1,e.points));p.growthScore=Math.min(1e6,p.growthScore+Math.max(1,e.points));p.power=playerPower(p.growthScore);p.level=computeLevel(p.growthScore);room.world.entities.splice(i,1);spawnWorldEntity(room);send(p.ws,{type:'world_eat',entityId:e.id,points:e.points,score:p.score,growthScore:p.growthScore});break;}}}}
+function assignTeam(room,requested){if(room.mode!=='teams')return null;if(requested==='A'||requested==='B')return requested;const a=[...room.values()].filter(p=>p.team==='A').length,b=[...room.values()].filter(p=>p.team==='B').length;return a<=b?'A':'B';}
+function teamName(t){return t==='A'?'Azul':t==='B'?'Rojo':null;}
+function removeClient(client){clients.delete(client.id);if(!client.joined||!client.room)return;const room=rooms.get(client.room);if(!room)return;room.delete(client.id);broadcastRoom(room,{type:'player_left',id:client.id,room:client.room});if(room.size===0)rooms.delete(client.room);}
+function serverAcceptState(client,msg,now){if(now-client.lastStateAt<STATE_RATE_MS)return;client.lastStateAt=now;const nx=Number(msg.x),ny=Number(msg.y),na=Number(msg.angle),ns=Number(msg.score),ng=Number(msg.growthScore),nr=Number(msg.radius);if(Number.isFinite(nx)&&Number.isFinite(ny)){const d=Math.hypot(nx-client.x,ny-client.y);const elapsed=Math.max(.04,(now-client.lastAcceptedAt)/1000);const maxStep=MAX_CLIENT_SPEED*elapsed+24;if(d<=maxStep){client.x=clamp(nx,0,WORLD_W);client.y=clamp(ny,0,WORLD_H)}else{const t=clamp(maxStep/d,0,1);client.x+=(nx-client.x)*t;client.y+=(ny-client.y)*t;}}if(Number.isFinite(na))client.angle=na;if(Number.isFinite(ns))client.score=Math.max(0,Math.min(1e6,Math.floor(ns)));if(Number.isFinite(ng))client.growthScore=Math.max(0,Math.min(1e6,Math.floor(ng)));if(Number.isFinite(nr))client.radius=clamp(nr,4,320);client.power=playerPower(client.growthScore);client.level=computeLevel(client.growthScore);client.alive=msg.alive!==false;client.sprinting=msg.sprinting===true;client.lastAcceptedAt=now;}
+const http=createServer(async(req,res)=>{try{const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);let pathname=decodeURIComponent(url.pathname);if(pathname==='/health'){res.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify({ok:true,service:'nany-hambrienta-multiplayer',rooms:rooms.size,players:clients.size}));return;}if(pathname==='/'||pathname==='/index.html'){const data=await readFile(join(__dirname,'index.html'));res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});res.end(data);return;}if(pathname==='/favicon.ico'){res.writeHead(204);res.end();return;}const fp=join(__dirname,pathname.replace(/^\/+/,''));const rel=relative(__dirname,fp);if(rel.startsWith('..')||rel.includes('\0')){res.writeHead(403);res.end('Forbidden');return;}const data=await readFile(fp);const ext=extname(fp);const type=ext==='.html'?'text/html; charset=utf-8':ext==='.js'||ext==='.mjs'?'text/javascript; charset=utf-8':ext==='.css'?'text/css; charset=utf-8':'application/octet-stream';res.writeHead(200,{'Content-Type':type,'Cache-Control':'no-store'});res.end(data);}catch(err){if(err?.code==='ENOENT'){res.writeHead(404);res.end('Not found');return;}console.error(err);res.writeHead(500);res.end('Server error');}});
+const wss=new WebSocketServer({noServer:true,maxPayload:MAX_MESSAGE_BYTES});
+http.on('upgrade',(req,socket,head)=>{const url=new URL(req.url||'/',`http://${req.headers.host||'localhost'}`);if(url.pathname!=='/ws'){socket.destroy();return;}wss.handleUpgrade(req,socket,head,ws=>wss.emit('connection',ws,req));});
+wss.on('connection',ws=>{const id=crypto.randomUUID();const client={id,ws,room:null,joined:false,name:'Nany',x:WORLD_W/2,y:WORLD_H/2,angle:0,score:0,growthScore:0,level:1,power:1,radius:11,alive:true,sprinting:false,deaths:0,mode:'ffa',team:null,teamName:null,lastStateAt:0,lastAcceptedAt:Date.now(),_pvpCooldown:0};clients.set(id,client);ws.on('error',()=>{});ws.on('message',(data,isBinary)=>{if(isBinary||data.byteLength>MAX_MESSAGE_BYTES)return;let msg;try{msg=JSON.parse(data.toString('utf8'))}catch{return;}if(!msg||typeof msg.type!=='string')return;if(msg.type==='join'){if(client.joined)return;const roomName=safeRoom(msg.room),requestedMode=safeMode(msg.mode),room=roomFor(roomName);if(room.size===0)room.mode=requestedMode;if(room.mode!==requestedMode){send(ws,{type:'error',code:'MODE_MISMATCH',message:`La sala ya está configurada como ${room.mode}.`});return;}if(room.size>=MAX_PLAYERS_PER_ROOM){send(ws,{type:'error',code:'ROOM_FULL',message:'Sala llena (máximo 8 jugadores).'});return;}ensureWorld(room);client.room=roomName;client.name=safeName(msg.name);client.mode=room.mode;client.team=assignTeam(room,msg.team);client.teamName=teamName(client.team);client.joined=true;const pos=randomPos(600);client.x=pos.x;client.y=pos.y;room.set(id,client);send(ws,{type:'welcome',id,room:roomName,maxPlayers:MAX_PLAYERS_PER_ROOM,mode:room.mode,team:client.team,teamName:client.teamName,player:publicPlayer(client),world:room.world.entities.map(publicEntity),players:[...room.values()].filter(p=>p.id!==id).map(publicPlayer)});broadcastRoom(room,{type:'player_joined',player:publicPlayer(client),room:roomName},id);return;}if(!client.joined||!client.room)return;const room=rooms.get(client.room);if(!room)return;if(msg.type==='state'){serverAcceptState(client,msg,Date.now());return;}if(msg.type==='leave'){try{ws.close()}catch{}}});ws.on('close',()=>removeClient(client));});
+let lastWorldBroadcast=0;const snapshotTimer=setInterval(()=>{const now=Date.now();for(const room of rooms.values()){updateWorld(room,TICK_MS/1000);handlePvP(room);handlePvE(room);const players=[...room.values()].map(publicPlayer);const includeWorld=now-room.world.lastBroadcast>=WORLD_BROADCAST_MS;if(includeWorld)room.world.lastBroadcast=now;for(const p of room.values()){const msg={type:'snapshot',serverTime:now,room:room.roomId,players,population:room.size,round:room.round,mode:room.mode};if(includeWorld)msg.world=room.world.entities.map(publicEntity);send(p.ws,msg);}}},TICK_MS);
+function shutdown(){clearInterval(snapshotTimer);for(const c of clients.values()){try{c.ws.close(1001,'Servidor cerrando')}catch{}}http.close(()=>process.exit(0));}
+process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);http.listen(PORT,HOST,()=>console.log(`Nany multiplayer authoritative world listening on http://${HOST}:${PORT}`));
