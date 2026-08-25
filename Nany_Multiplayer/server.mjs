@@ -252,8 +252,11 @@ function handlePvP(room) {
         victim.growthScore = victim.score;
         victim.level = computeLevel(victim.growthScore);
         victim.power = playerPower(victim.growthScore);
-        victim.x = clamp(6000 + (Math.random() - 0.5) * 1200, 200, WORLD_W - 200);
-        victim.y = clamp(6000 + (Math.random() - 0.5) * 1200, 200, WORLD_H - 200);
+        // Respawn totalmente aleatorio en el primer mapa: puede aparecer
+        // en cualquier zona del océano, incluyendo arriba/abajo/izquierda/derecha
+        // y las cuatro esquinas. Solo dejamos un margen para que no nazca fuera.
+        victim.x = clamp(Math.random() * WORLD_W, 200, WORLD_W - 200);
+        victim.y = clamp(Math.random() * WORLD_H, 200, WORLD_H - 200);
         send(victim.ws, { type: 'respawn', player: publicPlayer(victim), room: victim.room });
       }, 1800);
     }
