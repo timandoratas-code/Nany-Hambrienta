@@ -4641,7 +4641,7 @@ const Multiplayer = (()=>{
     ws.addEventListener('message',evt=>{
       let msg;try{msg=JSON.parse(evt.data);}catch(_){return;}
       if(msg.type==='welcome'){
-        state.connecting=false;state.connected=true;state.id=msg.id;state.room=msg.room||state.room;state.mode=msg.mode||state.mode;state.team=msg.team||null;state.teamName=msg.teamName||null;state.serverStage=Number(msg.stage)||0;state.deathHandled=false;
+        state.connecting=false;state.connected=true;state.id=msg.id;state.room=msg.room||state.room;state.mode=msg.mode||state.mode;state.team=msg.team||null;state.teamName=msg.teamName||null;state.serverStage=Number(msg.stage)||0;state.deathHandled=false;state.pendingWelcome=msg;
         if(msg.player&&game.player){game.player.x=msg.player.x;game.player.y=msg.player.y;game.player.vx=0;game.player.vy=0;game.score=Number(msg.player.score)||game.score;game.growthScore=Number(msg.player.growthScore)||game.growthScore;updateCamera();}
         state.players.clear(); for(const p of (msg.players||[]))if(p&&p.id!==state.id)applyPlayerSnapshot(p);
         applyWorldSnapshot(msg);updateModeUI(state.mode);setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(msg.population||1)}`,true);
@@ -4671,6 +4671,25 @@ const Multiplayer = (()=>{
     ws.addEventListener('error',()=>setStatus('Error de conexión — revisa que Render esté activo'));
     return true;
   }
+  function syncWelcomeToGame(){
+    const msg=state.pendingWelcome;
+    if(!msg || !game.player) return;
+    if(msg.player){
+      game.player.x=Number(msg.player.x);
+      game.player.y=Number(msg.player.y);
+      game.player.angle=Number.isFinite(Number(msg.player.angle))?Number(msg.player.angle):game.player.angle;
+      game.player.vx=0; game.player.vy=0;
+      game.score=Number(msg.player.score)||game.score;
+      game.growthScore=Number(msg.player.growthScore)||game.growthScore;
+      game.level=Math.max(0,(Number(msg.player.level)||1)-1);
+      updateCamera();
+    }
+    applyWorldSnapshot(msg);
+    updateCamera();
+    updateHUD();
+    state.renderDirty=true;
+  }
+
   function sendState(now){
     if(!isOnline()||!state.socket||state.socket.readyState!==WebSocket.OPEN||!game.player)return;
     if(now-state.lastSend<1000/state.sendHz)return;
@@ -4708,7 +4727,7 @@ const Multiplayer = (()=>{
   function open(){document.getElementById('startScreen').classList.add('hidden');document.getElementById('shopScreen').classList.add('hidden');document.getElementById('gameOverScreen').classList.add('hidden');document.getElementById('multiplayerScreen').classList.remove('hidden');const input=document.getElementById('mpRoomInput');if(input){input.value=normalizeRoom(state.room||'ABISMO01');setTimeout(()=>input.focus(),50);}updateModeUI(state.mode||'teams');}
   function close(){document.getElementById('multiplayerScreen').classList.add('hidden');if(!game.running&&!isOnline())document.getElementById('startScreen').classList.remove('hidden');}
   function disconnect(){try{state.socket?.send(JSON.stringify({type:'leave'}));}catch(_){}try{state.socket?.close();}catch(_){}state.socket=null;state.connected=false;state.connecting=false;state.id=null;state.players.clear();state.onlineEntities.clear();game.entities=[];const a=statusEl();if(a)a.classList.add('hidden');const b=leaderboardEl();if(b){b.classList.add('hidden');b.innerHTML='';}}
-  return {connect,disconnect,open,close,isConnected,isOnline,room:()=>state.room,setMode:updateModeUI,update,updateHUD:renderLeaderboard,drawRemotePlayers,renderEntities,consumeEntity,notifyBossDefeated,bossHit,stage:()=>state.serverStage};
+  return {connect,disconnect,open,close,isConnected,isOnline,room:()=>state.room,setMode:updateModeUI,update,updateHUD:renderLeaderboard,drawRemotePlayers,renderEntities,consumeEntity,notifyBossDefeated,bossHit,stage:()=>state.serverStage,syncWelcomeToGame};
 })();
 
 function applySharedStage(stage){
@@ -4752,6 +4771,7 @@ document.getElementById('mpJoinBtn').onclick = ()=>{
     btn.disabled=false;
     Multiplayer.close();
     startGame();
+    Multiplayer.syncWelcomeToGame();
   },(message)=>{
     btn.disabled=false;
     const s=document.getElementById('mpStatus');
