@@ -196,15 +196,15 @@
   .mp-team-btn.active[data-team="A"]{border-color:#5ea7ff;color:#9ec7ff;background:rgba(94,167,255,.1);}
   .mp-team-btn.active[data-team="B"]{border-color:#ff6a6a;color:#ff9b9b;background:rgba(255,106,106,.1);}
   .mp-mode-note{font-size:11px;color:var(--ink-dim);line-height:1.45;margin:4px 0 12px;}
-  .mp-hud-status{position:absolute;left:18px;top:102px;padding:6px 10px;border-radius:9px;background:rgba(4,20,31,.78);border:1px solid rgba(77,255,240,.18);font:700 10px/1.2 'Space Mono',monospace;color:var(--ink-dim);z-index:12;pointer-events:none;backdrop-filter:blur(6px);}
+  .mp-hud-status{position:absolute;right:18px;top:246px;padding:6px 10px;border-radius:9px;background:rgba(4,20,31,.78);border:1px solid rgba(77,255,240,.18);font:700 10px/1.2 'Space Mono',monospace;color:var(--ink-dim);z-index:12;pointer-events:none;backdrop-filter:blur(6px);}
   .mp-hud-status.show{display:block !important;}
   .mp-leaderboard{position:absolute;right:18px;top:248px;width:190px;z-index:12;padding:8px 10px;border-radius:12px;background:rgba(4,20,31,.74);border:1px solid rgba(255,255,255,.10);font:700 10px/1.35 'Space Mono',monospace;backdrop-filter:blur(6px);pointer-events:none;}
   .mp-leaderboard .lb-title{color:var(--bio-cyan);letter-spacing:.08em;font-size:9px;text-transform:uppercase;margin-bottom:5px;}
   .mp-leaderboard .lb-row{display:flex;justify-content:space-between;gap:8px;color:var(--ink-light);white-space:nowrap;}
   .mp-leaderboard .lb-row.me{color:#fff;font-weight:900;}
   .mp-leaderboard .lb-left{overflow:hidden;text-overflow:ellipsis;}
-  @media (max-width:700px){.mp-hud-status{left:8px;top:48px;font-size:8.5px;padding:4px 7px;}.mp-leaderboard{right:8px;top:158px;width:150px;font-size:8.5px;padding:6px 8px;}}
-  @media (max-height:520px) and (orientation:landscape){.mp-hud-status{top:48px;left:8px;font-size:8px;}.mp-leaderboard{top:108px;right:8px;width:138px;font-size:8px;}}
+  @media (max-width:700px){.mp-hud-status{left:8px;right:auto;top:48px;font-size:8.5px;padding:4px 7px;}.mp-leaderboard{right:8px;top:158px;width:150px;font-size:8.5px;padding:6px 8px;}}
+  @media (max-height:520px) and (orientation:landscape){.mp-hud-status{top:48px;left:8px;right:auto;font-size:8px;}.mp-leaderboard{top:108px;right:8px;width:138px;font-size:8px;}}
   @media(max-width:600px){.mp-modes{grid-template-columns:1fr;}.mp-mode{padding:10px;}}
 
   /* ---------- overlays ---------- */
@@ -769,54 +769,7 @@
     #minimap{ width:48px !important; height:48px !important; top:36px !important; }
   }
 
-
-  @media (min-width: 701px){
-    #multiplayerStatus{left:18px;top:118px;max-width:220px;}
-    #mpLeaderboard{right:18px;top:112px;left:auto;bottom:auto;width:235px;}
-  }
-  @media (orientation: landscape) and (pointer: coarse){
-    #multiplayerStatus{left:8px;top:42px;max-width:180px;font-size:9px;}
-    #mpLeaderboard{right:8px;top:106px;left:auto;width:170px;font-size:9px;}
-  }
-
-
-  #multiplayerBtn{transition:transform .12s ease,border-color .12s ease,box-shadow .12s ease;}
-  #multiplayerBtn:hover{transform:translateY(-1px);border-color:var(--bio-cyan);box-shadow:0 8px 22px rgba(77,255,240,.16);}
-  #multiplayerBtn:active{transform:scale(.97);}
-
 </style>
-
-<script>
-window.__openNanyMultiplayer = function(event){
-  if(event){ event.preventDefault(); event.stopPropagation(); }
-  const start = document.getElementById('startScreen');
-  const mp = document.getElementById('multiplayerScreen');
-  if(start) start.classList.add('hidden');
-  if(mp) mp.classList.remove('hidden');
-  const input = document.getElementById('mpRoomInput');
-  if(input){ setTimeout(()=>{ try{ input.focus(); input.select(); }catch(_){} }, 40); }
-  try{ if(window.Multiplayer && typeof window.Multiplayer.open==='function') window.Multiplayer.open(); }catch(_){}
-  return false;
-};
-window.__closeNanyMultiplayer = function(event){
-  if(event){ event.preventDefault(); event.stopPropagation(); }
-  const mp = document.getElementById('multiplayerScreen');
-  const start = document.getElementById('startScreen');
-  if(mp) mp.classList.add('hidden');
-  if(start) start.classList.remove('hidden');
-  return false;
-};
-window.__selectNanyMode = function(mode,event){
-  if(event){ event.preventDefault(); event.stopPropagation(); }
-  document.querySelectorAll('.mp-mode').forEach(b=>b.classList.toggle('active', b.dataset.mode===mode));
-  const teamRow=document.getElementById('mpTeamRow');
-  if(teamRow) teamRow.classList.toggle('show', mode==='teams');
-  const note=document.getElementById('mpModeNote');
-  if(note){ note.textContent = mode==='teams' ? 'En Equipos, tú y tu novia pueden quedar en el mismo equipo.' : mode==='ffa' ? 'Free For All: todos contra todos.' : 'Cooperativo: todos contra el océano.'; }
-  try{ if(window.Multiplayer && typeof window.Multiplayer.setMode==='function') window.Multiplayer.setMode(mode); }catch(_){}
-  return false;
-};
-</script>
 </head>
 <body>
 <div id="landscapeNotice" aria-hidden="true">
@@ -871,9 +824,9 @@ window.__selectNanyMode = function(mode,event){
       <h1 style="font-size:28px;">Multijugador</h1>
       <p class="sub">Crea una sala o entra con el mismo código. Elige el modo antes de entrar.</p>
       <div class="mp-modes" id="mpModeButtons">
-        <button class="mp-mode active" type="button" data-mode="teams" onclick="window.__selectNanyMode && window.__selectNanyMode('teams',event)"><strong>👥 EQUIPOS</strong>Azul vs Rojo. No puedes comerte a tu aliado.</button>
-        <button class="mp-mode" type="button" data-mode="ffa" onclick="window.__selectNanyMode && window.__selectNanyMode('ffa',event)"><strong>⚔️ FREE FOR ALL</strong>Todos contra todos. El más grande manda.</button>
-        <button class="mp-mode" type="button" data-mode="coop" onclick="window.__selectNanyMode && window.__selectNanyMode('coop',event)"><strong>🤝 COOPERATIVO</strong>Todos juntos contra el océano.</button>
+        <button class="mp-mode active" type="button" data-mode="teams"><strong>👥 EQUIPOS</strong>Azul vs Rojo. No puedes comerte a tu aliado.</button>
+        <button class="mp-mode" type="button" data-mode="ffa"><strong>⚔️ FREE FOR ALL</strong>Todos contra todos. El más grande manda.</button>
+        <button class="mp-mode" type="button" data-mode="coop"><strong>🤝 COOPERATIVO</strong>Todos juntos contra el océano.</button>
       </div>
       <p class="mp-mode-note" id="mpModeNote">En Equipos, tú y tu novia pueden quedar en el mismo equipo. La sala conserva el modo que elija el creador.</p>
       <div class="mp-team-row show" id="mpTeamRow">
@@ -890,7 +843,7 @@ window.__selectNanyMode = function(mode,event){
       <div class="row">
         <button class="btn primary" id="mpJoinBtn" type="button">Entrar a la sala</button>
         <button class="btn secondary" id="mpLeaveBtn" type="button">Salir</button>
-        <button class="btn ghost" id="mpCloseBtn" type="button" onclick="window.__closeNanyMultiplayer && window.__closeNanyMultiplayer(event)">Cerrar</button>
+        <button class="btn ghost" id="mpCloseBtn" type="button">Cerrar</button>
       </div>
       <p class="fish-name-hint" style="margin-top:12px;">El nombre de arriba se usa como nombre del jugador.</p>
     </div>
@@ -960,7 +913,7 @@ window.__selectNanyMode = function(mode,event){
         <button class="btn primary" id="startBtn">Sumergirse ▾</button>
         <button class="btn ghost" id="startShopBtn">Tienda</button>
         <button class="btn secondary dev-btn" id="devBtn">⚙ Código de desarrollador</button>
-        <button class="btn secondary" id="multiplayerBtn" type="button" onclick="window.__openNanyMultiplayer && window.__openNanyMultiplayer(event)">🌐 Multijugador</button>
+        <button class="btn secondary" id="multiplayerBtn" type="button">🌐 Multijugador</button>
       </div>
     </div>
   </div>
@@ -4773,12 +4726,18 @@ const Multiplayer = (()=>{
 
   function update(now){ sendState(now); renderLeaderboard(); }
   function open(room){
+    document.getElementById('startScreen').classList.add('hidden');
+    document.getElementById('shopScreen').classList.add('hidden');
+    document.getElementById('gameOverScreen').classList.add('hidden');
     document.getElementById('multiplayerScreen').classList.remove('hidden');
     const input=document.getElementById('mpRoomInput'); if(input){ input.value=normalizeRoom(room||state.room||'ABISMO01'); setTimeout(()=>input.focus(),50); }
     updateModeUI(state.mode||'teams');
     if(state.connected) setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(state.players.size+1)}`,true); else setStatus('Desconectado');
   }
-  function close(){ document.getElementById('multiplayerScreen').classList.add('hidden'); }
+  function close(){
+    document.getElementById('multiplayerScreen').classList.add('hidden');
+    if(!game.running){ document.getElementById('startScreen').classList.remove('hidden'); }
+  }
 
   return {connect,update,drawRemotePlayers,open,close,disconnect,isConnected:()=>state.connected,room:()=>state.room,setMode:updateModeUI,updateHUD:renderLeaderboard};
 })();
@@ -4808,7 +4767,6 @@ document.getElementById('mpLeaveBtn').onclick = ()=>{ Multiplayer.disconnect(); 
 document.getElementById('goMultiplayerBtn').onclick = ()=>{ document.getElementById('gameOverScreen').classList.add('hidden'); Multiplayer.open(); };
 document.querySelectorAll('.mp-mode').forEach(btn=>btn.addEventListener('click',()=>{ Multiplayer.setMode(btn.dataset.mode); }));
 document.querySelectorAll('.mp-team-btn').forEach(btn=>btn.addEventListener('click',()=>{ document.querySelectorAll('.mp-team-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }));
-document.getElementById('mpRoomInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); document.getElementById('mpJoinBtn').click(); } });
 document.getElementById('mpJoinBtn').onclick = ()=>{
   const room=document.getElementById('mpRoomInput').value;
   Multiplayer.connect(room);
