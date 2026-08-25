@@ -4718,7 +4718,13 @@ const Multiplayer = (()=>{
     const w=W, h=H, z=getViewZoom();
     const isMobile = w <= 700 || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
     const margin = isMobile ? 42 : 36;
-    const cx=w/2, cy=h/2;
+    // El origen debe ser TU pez en coordenadas de pantalla, no el centro
+    // matemático de la ventana. Esto importa cuando la cámara está pegada
+    // a los bordes del mapa.
+    const selfX = game.player ? (game.player.x - camera.x) * z : w/2;
+    const selfY = game.player ? (game.player.y - camera.y) * z : h/2;
+    const cx = Math.max(0, Math.min(w, selfX));
+    const cy = Math.max(0, Math.min(h, selfY));
     const left=margin, right=w-margin, top=margin, bottom=h-margin;
     const frag=document.createDocumentFragment();
 
