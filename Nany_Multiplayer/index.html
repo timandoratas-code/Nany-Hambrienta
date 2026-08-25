@@ -4656,9 +4656,11 @@ const Multiplayer = (()=>{
       let msg;try{msg=JSON.parse(evt.data);}catch(_){return;}
       if(msg.type==='welcome'){
         state.connecting=false;state.connected=true;state.id=msg.id;state.room=msg.room||state.room;state.mode=msg.mode||state.mode;state.team=msg.team||null;state.teamName=msg.teamName||null;state.serverStage=Number(msg.stage)||0;state.deathHandled=false;state.pendingWelcome=msg;
-        if(msg.player&&game.player){game.player.x=msg.player.x;game.player.y=msg.player.y;game.player.vx=0;game.player.vy=0;game.score=Number(msg.player.score)||game.score;game.growthScore=Number(msg.player.growthScore)||game.growthScore;updateCamera();}
-        state.players.clear(); for(const p of (msg.players||[]))if(p&&p.id!==state.id)applyPlayerSnapshot(p);
-        applyWorldSnapshot(msg);updateModeUI(state.mode);setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(msg.population||1)}`,true);
+        // IMPORTANT: do not touch game.player/camera/world before startGame() creates them.
+        // The join callback will start the game first, then syncWelcomeToGame() applies everything.
+        state.players.clear();
+        for(const p of (msg.players||[])) if(p && p.id!==state.id) state.players.set(p.id,{...p,renderX:p.x,renderY:p.y,targetX:p.x,targetY:p.y});
+        updateModeUI(state.mode);setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(msg.population||1)}`,true);
         const ready=state.onReady; state.onReady=null; state.onFail=null;
         if(ready) ready();
       }else if(msg.type==='world'){
@@ -4781,16 +4783,11 @@ document.getElementById('mpJoinBtn').onclick = ()=>{
   const room=document.getElementById('mpRoomInput').value;
   const btn=document.getElementById('mpJoinBtn');
   btn.disabled=true;
-  Multiplayer.connect(room,()=>{
-    btn.disabled=false;
-    Multiplayer.close();
-    startGame();
-    Multiplayer.syncWelcomeToGame();
-  },(message)=>{
-    btn.disabled=false;
-    const s=document.getElementById('mpStatus');
-    if(s){s.textContent=message;s.style.color='#ff6a6a';}
-  });
+  let settled=false;
+  const settleOk=()=>{ if(settled)return; settled=true; clearTimeout(window.__mpJoinTimer); btn.disabled=false; Multiplayer.close(); startGame(); Multiplayer.syncWelcomeToGame(); };
+  const settleFail=(message)=>{ if(settled)return; settled=true; clearTimeout(window.__mpJoinTimer); btn.disabled=false; const s=document.getElementById('mpStatus'); if(s){s.textContent=message;s.style.color='#ff6a6a';} };
+  window.__mpJoinTimer=setTimeout(()=>settleFail('El servidor tardó demasiado en responder. Revisa Render/WebSocket.'),7000);
+  Multiplayer.connect(room,settleOk,settleFail);
 };
 document.getElementById('startBtn').onclick = startGame;
 document.getElementById('retryBtn').onclick = startGame;
