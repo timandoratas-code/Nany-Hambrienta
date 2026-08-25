@@ -3954,17 +3954,22 @@ function drawFloaters(){
 function drawDangerGlow(){
   if(!Save.radar) return;
   const p = game.player;
+  const mobile = window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
+  let checked = 0;
   for(const e of game.entities){
     if(e.coin || e.hazard) continue;
-    if(fishHitbox(e) > playerHitbox() && dist(e,p) < 260){
+    if(mobile && checked >= 40) break;
+    const d = dist(e,p);
+    if(d < 260 && fishHitbox(e) > playerHitbox()){
       ctx.save();
-      ctx.globalAlpha = 0.5*(1-dist(e,p)/260);
+      ctx.globalAlpha = 0.5*(1-d/260);
       ctx.strokeStyle = '#ff3b3b';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(e.x,e.y,e.size*1.4,0,Math.PI*2);
       ctx.stroke();
       ctx.restore();
+      checked++;
     }
   }
 }
@@ -3973,11 +3978,15 @@ function drawDangerGlow(){
 const minimap = document.getElementById('minimap');
 const miniCtx = minimap.getContext('2d');
 
+let minimapFrameCounter = 0;
 function renderMinimap(){
   if(!game.player){
     miniCtx.clearRect(0,0,minimap.width,minimap.height);
     return;
   }
+  const mobile = window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
+  minimapFrameCounter++;
+  if(mobile && minimapFrameCounter % 6 !== 0) return;
   const mw=minimap.width, mh=minimap.height;
   miniCtx.clearRect(0,0,mw,mh);
   miniCtx.fillStyle='rgba(2,11,20,.92)';
@@ -4082,8 +4091,22 @@ function render(){
     drawWorldGrid();
     drawDangerGlow();
 
-    const sorted = game.entities.slice().sort((a,b)=>a.size-b.size);
-    for(const e of sorted){
+    const mobile = window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
+    const viewW = W / z, viewH = H / z;
+    const margin = mobile ? 260 : 420;
+    const leftV = camera.x - margin, rightV = camera.x + viewW + margin;
+    const topV = camera.y - margin, bottomV = camera.y + viewH + margin;
+    let visible;
+    if(mobile){
+      visible = [];
+      for(const e of game.entities){
+        if(e.x>=leftV && e.x<=rightV && e.y>=topV && e.y<=bottomV) visible.push(e);
+      }
+      visible.sort((a,b)=>a.size-b.size);
+    }else{
+      visible = game.entities.slice().sort((a,b)=>a.size-b.size);
+    }
+    for(const e of visible){
       if(e.coin) drawCoin(e); else if(e.gemFish) drawGemFish(e); else drawFish(e);
     }
 
