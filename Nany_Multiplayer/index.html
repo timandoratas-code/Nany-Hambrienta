@@ -196,15 +196,15 @@
   .mp-team-btn.active[data-team="A"]{border-color:#5ea7ff;color:#9ec7ff;background:rgba(94,167,255,.1);}
   .mp-team-btn.active[data-team="B"]{border-color:#ff6a6a;color:#ff9b9b;background:rgba(255,106,106,.1);}
   .mp-mode-note{font-size:11px;color:var(--ink-dim);line-height:1.45;margin:4px 0 12px;}
-  .multiplayer-status{position:absolute;left:50%;top:62px;transform:translateX(-50%);padding:6px 11px;border-radius:999px;background:rgba(4,20,31,.78);border:1px solid rgba(77,255,240,.2);font:700 10px/1 'Space Mono',monospace;color:var(--ink-dim);z-index:15;pointer-events:none;white-space:nowrap;backdrop-filter:blur(6px);} 
-  #mpWorldMarkers{position:absolute;inset:0;z-index:14;pointer-events:none;}
-  .mp-world-marker{position:absolute;display:flex;align-items:center;gap:4px;transform:translate(-50%,-50%);font:700 10px/1 'Space Mono',monospace;text-shadow:0 2px 5px rgba(0,0,0,.9);white-space:nowrap;}
-  .mp-world-marker .arrow{font-size:18px;line-height:1;}
-  .mp-world-marker.team-a{color:#9ec7ff}.mp-world-marker.team-b{color:#ff9b9b}.mp-world-marker.ffa{color:#d7c8ff}.mp-world-marker.coop{color:#7dfff3}
-  .mp-mode:active,.mp-team-btn:active,#mpJoinBtn:active,#mpLeaveBtn:active,#mpCloseBtn:active,#multiplayerBtn:active{transform:translateY(1px) scale(.985);}
-  #pauseBtn.multiplayer-disabled{opacity:.38;cursor:not-allowed;transform:none !important;}
-  @media(max-width:700px){.multiplayer-status{top:46px;left:50%;font-size:9px;padding:5px 9px;} }
-  @media(max-height:520px) and (orientation:landscape){.multiplayer-status{top:40px;font-size:8.5px;} }
+  .mp-hud-status{position:absolute;left:18px;top:102px;padding:6px 10px;border-radius:9px;background:rgba(4,20,31,.78);border:1px solid rgba(77,255,240,.18);font:700 10px/1.2 'Space Mono',monospace;color:var(--ink-dim);z-index:12;pointer-events:none;backdrop-filter:blur(6px);}
+  .mp-hud-status.show{display:block !important;}
+  .mp-leaderboard{position:absolute;right:18px;top:248px;width:190px;z-index:12;padding:8px 10px;border-radius:12px;background:rgba(4,20,31,.74);border:1px solid rgba(255,255,255,.10);font:700 10px/1.35 'Space Mono',monospace;backdrop-filter:blur(6px);pointer-events:none;}
+  .mp-leaderboard .lb-title{color:var(--bio-cyan);letter-spacing:.08em;font-size:9px;text-transform:uppercase;margin-bottom:5px;}
+  .mp-leaderboard .lb-row{display:flex;justify-content:space-between;gap:8px;color:var(--ink-light);white-space:nowrap;}
+  .mp-leaderboard .lb-row.me{color:#fff;font-weight:900;}
+  .mp-leaderboard .lb-left{overflow:hidden;text-overflow:ellipsis;}
+  @media (max-width:700px){.mp-hud-status{left:8px;top:48px;font-size:8.5px;padding:4px 7px;}.mp-leaderboard{right:8px;top:158px;width:150px;font-size:8.5px;padding:6px 8px;}}
+  @media (max-height:520px) and (orientation:landscape){.mp-hud-status{top:48px;left:8px;font-size:8px;}.mp-leaderboard{top:108px;right:8px;width:138px;font-size:8px;}}
   @media(max-width:600px){.mp-modes{grid-template-columns:1fr;}.mp-mode{padding:10px;}}
 
   /* ---------- overlays ---------- */
@@ -219,8 +219,6 @@
     backdrop-filter:blur(3px);
   }
   .hidden{display:none !important;}
-  .multiplayer-overlay{z-index:80;}
-  #multiplayerScreen .panel{max-height:88vh;overflow-y:auto;}
   .hud-pill.gems{border-color:rgba(87,255,99,.45);}
   .hud-pill.gems{border-color:rgba(87,255,99,.45);}
   .hud-pill.gems .dot{background:#57ff63;box-shadow:0 0 8px #57ff63;}
@@ -814,12 +812,12 @@
     <div id="sprintBar"><div id="sprintFill"></div></div>
   </div>
   <canvas id="minimap" width="170" height="170" aria-label="Minimapa"></canvas>
-  <div id="multiplayerStatus" class="multiplayer-status">SOLO</div>
-  <div id="mpWorldMarkers" aria-hidden="true"></div>
+  <div id="multiplayerStatus" class="mp-hud-status hidden">EQUIPOS · SALA ABISMO01 · 1/8</div>
+  <div id="mpLeaderboard" class="mp-leaderboard hidden" aria-live="polite"></div>
   <div id="saveNotice">Progreso guardado</div>
 
   <!-- MULTIPLAYER -->
-  <div class="overlay hidden multiplayer-overlay" id="multiplayerScreen">
+  <div class="overlay hidden" id="multiplayerScreen">
     <div class="panel dev-modal">
       <p class="eyebrow">Juega con amigos</p>
       <h1 style="font-size:28px;">Multijugador</h1>
@@ -834,7 +832,7 @@
         <div class="fish-name-label" style="margin-bottom:8px;">Equipo</div>
         <button class="mp-team-btn active" type="button" data-team="A">🔵 Azul</button>
         <button class="mp-team-btn" type="button" data-team="B">🔴 Rojo</button>
-        <span class="fish-name-hint">También puedes dejar que el servidor te acomode.</span>
+        <span class="fish-name-hint">El equipo solo se muestra como etiqueta; tu pez conserva la skin que compraste.</span>
       </div>
       <div style="margin:12px 0;">
         <label class="fish-name-label" for="mpRoomInput">Código de sala</label>
@@ -976,6 +974,7 @@
       <div class="row">
         <button class="btn primary" id="retryBtn">Volver a sumergirse ▾</button>
         <button class="btn ghost" id="goShopBtn">Tienda</button>
+        <button class="btn secondary" id="goMultiplayerBtn" type="button">🌐 Multijugador</button>
       </div>
     </div>
   </div>
@@ -1838,8 +1837,11 @@ function updateEntity(e, dt){
     // La persecución dura EXACTAMENTE 1 segundo.
     // Después queda ciego durante 5 segundos; si sigues cerca al terminar esos 5 s,
     // puede intentar otra persecución. No hay reacople instantáneo.
+    // Detección MUY cercana: si el jugador se queda quieto, el depredador
+    // tiene tiempo de alcanzarlo durante su única ventana de 1 segundo.
+    // Fuera de esta distancia, el pez no "ve" al jugador y sigue vagando.
     const CHASE_RADIUS = predator
-      ? (e.cornerThreat ? 220 : (e.centerThreat ? 190 : 180))
+      ? (e.cornerThreat ? 125 : (e.centerThreat ? 120 : 110))
       : 0;
     if(e._attackCooldown==null) e._attackCooldown=0;
     if(e._attackCooldown>0) e._attackCooldown=Math.max(0,e._attackCooldown-dt);
@@ -2441,9 +2443,6 @@ function keyboardActive(){
 }
 
 window.addEventListener('keydown', e=>{
-  const target=e.target;
-  const typingTarget=target && (target.tagName==='INPUT' || target.tagName==='TEXTAREA' || target.isContentEditable);
-  if(typingTarget) return;
   if(e.code === 'Space'){
     e.preventDefault();
     startSprint();
@@ -2460,9 +2459,6 @@ window.addEventListener('keydown', e=>{
 });
 
 window.addEventListener('keyup', e=>{
-  const target=e.target;
-  const typingTarget=target && (target.tagName==='INPUT' || target.tagName==='TEXTAREA' || target.isContentEditable);
-  if(typingTarget) return;
   if(e.code === 'Space'){
     e.preventDefault();
     stopSprint();
@@ -4113,7 +4109,6 @@ function render(){
     drawDeathCorpse();
     drawPet();
     Multiplayer.drawRemotePlayers();
-    Multiplayer.drawWorldMarkers();
     drawParticles();
     drawFloaters();
 
@@ -4140,6 +4135,7 @@ function updateHUD(){
   document.getElementById('healthFill').style.width=pct+'%';
   document.getElementById('healthText').textContent=`${Math.max(0,game.lives)}/${totalLives}`;
   updateSprintHUD();
+  if(typeof Multiplayer!=='undefined' && Multiplayer.updateHUD) Multiplayer.updateHUD();
 }
 
 /* =========================================================
@@ -4527,13 +4523,35 @@ const Multiplayer = (()=>{
     lastSnapshotAt:0, pingMs:null, blockedStateUntil:0
   };
   const statusEl=()=>document.getElementById('multiplayerStatus');
+  const leaderboardEl=()=>document.getElementById('mpLeaderboard');
   const modalStatus=()=>document.getElementById('mpStatus');
   const populationText=(count)=>`SALA ${state.room||'—'} · ${count||1}/8`;
 
   function setStatus(text, ok=false){
-    const a=statusEl(); if(a){a.textContent=text; a.style.color=ok?'#4dfff0':'#7fa8ac';}
+    const a=statusEl(); if(a){a.textContent=text; a.classList.toggle('hidden',!ok); a.classList.toggle('show',ok); a.style.color=ok?'#4dfff0':'#7fa8ac';}
     const b=modalStatus(); if(b){b.textContent=text; b.style.color=ok?'#4dfff0':'#7fa8ac';}
+    const pauseBtn=document.getElementById('pauseBtn');
+    if(pauseBtn){ pauseBtn.style.display=ok ? 'none' : ''; if(ok) pauseBtn.textContent='⏸'; }
+    renderLeaderboard();
   }
+
+  function renderLeaderboard(){
+    const el=leaderboardEl();
+    if(!el) return;
+    if(!state.connected){ el.classList.add('hidden'); el.innerHTML=''; return; }
+    const me={id:state.id,name:Save.fishName||'Nany',score:Math.floor(game.score||0),team:state.team,teamName:state.teamName,power:playerPower(game.score||0)};
+    const rows=[me,...[...state.players.values()].filter(p=>p.alive!==false).map(p=>({id:p.id,name:p.name||'Jugador',score:Math.floor(p.score||0),team:p.team,teamName:p.teamName,power:p.power||1}))];
+    rows.sort((a,b)=>b.score-a.score);
+    const top=rows.slice(0,8);
+    el.innerHTML=`<div class="lb-title">${modeLabel(state.mode)} · CLASIFICACIÓN</div>`+top.map((p,i)=>{
+      const team=state.mode==='teams' ? ` <span style="opacity:.7">${p.teamName||'Equipo'}</span>` : '';
+      const meClass=p.id===state.id?' me':'';
+      return `<div class="lb-row${meClass}"><span class="lb-left">${i+1}. ${escapeHtml(p.name)}${team}</span><span>${p.score}</span></div>`;
+    }).join('');
+    el.classList.remove('hidden');
+  }
+
+  function escapeHtml(value){ return String(value??'').replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch])); }
   function normalizeRoom(v){ return String(v||'ABISMO01').trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'').slice(0,16)||'ABISMO01'; }
   function normalizeMode(v){ return ['teams','ffa','coop'].includes(v)?v:'teams'; }
   function currentMode(){ return normalizeMode(document.querySelector('.mp-mode.active')?.dataset.mode || state.mode || 'teams'); }
@@ -4581,10 +4599,7 @@ const Multiplayer = (()=>{
           if(!p || p.id===state.id) return;
           state.players.set(p.id,{...p,renderX:p.x,renderY:p.y,targetX:p.x,targetY:p.y});
         });
-        setStatus(`ABISMO · ${modeLabel(state.mode)}${state.mode==='teams' && state.teamName ? ` · ${state.teamName}` : ''} · ${populationText(state.players.size+1)}`,true);
-        Multiplayer.lockPause(true);
-        document.getElementById('multiplayerScreen').classList.add('hidden');
-        if(!game.running) startGame();
+        setStatus(populationText(state.players.size+1),true);
       }else if(msg.type==='snapshot'){
         state.lastSnapshotAt=performance.now();
         const incoming=new Set();
@@ -4601,7 +4616,7 @@ const Multiplayer = (()=>{
         });
         for(const id of state.players.keys()) if(!incoming.has(id)) state.players.delete(id);
         state.mode=msg.mode||state.mode; updateModeUI(state.mode);
-        setStatus(`${modeLabel(state.mode)} · ${populationText(msg.population||state.players.size+1)}`,true);
+        setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(msg.population||state.players.size+1)}`,true);
       }else if(msg.type==='player_joined'){
         const p=msg.player;
         if(p && p.id!==state.id) state.players.set(p.id,{...p,renderX:p.x,renderY:p.y,targetX:p.x,targetY:p.y});
@@ -4669,33 +4684,6 @@ const Multiplayer = (()=>{
     }
   }
 
-  function drawWorldMarkers(){
-    const layer=document.getElementById('mpWorldMarkers');
-    if(!layer) return;
-    layer.replaceChildren();
-    if(!state.connected || !game.player) return;
-    const z=getViewZoom();
-    const viewW=W/z, viewH=H/z;
-    const centerX=camera.x + viewW/2, centerY=camera.y + viewH/2;
-    const halfW=W/2-26, halfH=H/2-34;
-    for(const p of state.players.values()) {
-      if(!p.alive) continue;
-      const sx=W/2 + (p.renderX-centerX)*z;
-      const sy=H/2 + (p.renderY-centerY)*z;
-      if(sx>=24 && sx<=W-24 && sy>=90 && sy<=H-24) continue;
-      const dx=sx-W/2, dy=sy-H/2;
-      const scale=Math.min((halfW)/Math.max(Math.abs(dx),1),(halfH)/Math.max(Math.abs(dy),1),1);
-      const x=W/2+dx*scale, y=H/2+dy*scale;
-      const angle=Math.atan2(dy,dx);
-      const el=document.createElement('div');
-      el.className=`mp-world-marker ${state.mode==='teams'?(p.team==='A'?'team-a':'team-b'):state.mode==='coop'?'coop':'ffa'}`;
-      el.style.left=`${x}px`; el.style.top=`${y}px`;
-      const arrow=document.createElement('span'); arrow.className='arrow'; arrow.textContent='➤'; arrow.style.transform=`rotate(${angle}rad)`;
-      const label=document.createElement('span'); label.textContent=p.name||'Jugador';
-      el.append(arrow,label); layer.appendChild(el);
-    }
-  }
-
   function onPlayerEaten(msg){
     if(msg.victimId===state.id){
       if(game.player && !game.player._takingDamage){
@@ -4730,59 +4718,54 @@ const Multiplayer = (()=>{
     try{ state.socket?.send(JSON.stringify({type:'leave'})); }catch(_){}
     try{ state.socket?.close(); }catch(_){}
     state.socket=null; state.connected=false; state.id=null; state.players.clear();
-    Multiplayer.lockPause(false);
+    const a=statusEl(); if(a){a.classList.add('hidden'); a.classList.remove('show');}
+    const b=leaderboardEl(); if(b){b.classList.add('hidden'); b.innerHTML='';}
     setStatus('SOLO');
   }
 
-  function update(now){ sendState(now); }
+  function update(now){ sendState(now); renderLeaderboard(); }
   function open(room){
-    const screen=document.getElementById('multiplayerScreen');
-    screen.classList.remove('hidden');
+    document.getElementById('multiplayerScreen').classList.remove('hidden');
     const input=document.getElementById('mpRoomInput'); if(input) input.value=normalizeRoom(room||state.room||'ABISMO01');
     updateModeUI(state.mode||'teams');
-    if(state.connected) setStatus(`ABISMO · ${modeLabel(state.mode)}${state.mode==='teams' && state.teamName ? ` · ${state.teamName}` : ''} · ${populationText(state.players.size+1)}`,true); else setStatus('Elige un modo y una sala');
-    setTimeout(()=>{ if(input) input.focus(); },50);
+    if(state.connected) setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(state.players.size+1)}`,true); else setStatus('Desconectado');
   }
   function close(){ document.getElementById('multiplayerScreen').classList.add('hidden'); }
 
-  function setControlsLocked(locked){
-    const pauseBtn=document.getElementById('pauseBtn');
-    if(pauseBtn){
-      pauseBtn.disabled=!!locked;
-      pauseBtn.classList.toggle('multiplayer-disabled',!!locked);
-      pauseBtn.textContent='⏸';
-    }
-  }
-
-  return {connect,update,drawRemotePlayers,drawWorldMarkers,open,close,disconnect,isConnected:()=>state.connected,room:()=>state.room,setModeUI:updateModeUI,lockPause:setControlsLocked,state};
+  return {connect,update,drawRemotePlayers,open,close,disconnect,isConnected:()=>state.connected,room:()=>state.room,setMode:updateModeUI,updateHUD:renderLeaderboard};
 })();
 
+
+function showStartMenu(){
+  Multiplayer.disconnect();
+  game.running=false;
+  game.paused=false;
+  game.player=null;
+  document.getElementById('multiplayerScreen').classList.add('hidden');
+  document.getElementById('shopScreen').classList.add('hidden');
+  document.getElementById('gameOverScreen').classList.add('hidden');
+  document.getElementById('startScreen').classList.remove('hidden');
+  const pauseBtn=document.getElementById('pauseBtn');
+  if(pauseBtn) pauseBtn.textContent='⏸';
+  const status=document.getElementById('multiplayerStatus');
+  if(status){status.classList.add('hidden');status.classList.remove('show');}
+}
 
 /* =========================================================
    UI WIRING
    ========================================================= */
-document.getElementById('multiplayerBtn').onclick = ()=>{
-  Multiplayer.open();
-};
+document.getElementById('multiplayerBtn').onclick = ()=>Multiplayer.open();
 document.getElementById('mpCloseBtn').onclick = ()=>Multiplayer.close();
-document.getElementById('mpLeaveBtn').onclick = ()=>Multiplayer.disconnect();
-document.querySelectorAll('.mp-mode').forEach(btn=>btn.addEventListener('click',(e)=>{
-  e.preventDefault(); e.stopPropagation();
-  Multiplayer.setModeUI(btn.dataset.mode);
-}));
-document.querySelectorAll('.mp-team-btn').forEach(btn=>btn.addEventListener('click',(e)=>{
-  e.preventDefault(); e.stopPropagation();
-  document.querySelectorAll('.mp-team-btn').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-}));
+document.getElementById('mpLeaveBtn').onclick = ()=>{ Multiplayer.disconnect(); Multiplayer.close(); showStartMenu(); };
+document.getElementById('goMultiplayerBtn').onclick = ()=>{ document.getElementById('gameOverScreen').classList.add('hidden'); Multiplayer.open(); };
+document.querySelectorAll('.mp-mode').forEach(btn=>btn.addEventListener('click',()=>{ Multiplayer.setMode(btn.dataset.mode); }));
+document.querySelectorAll('.mp-team-btn').forEach(btn=>btn.addEventListener('click',()=>{ document.querySelectorAll('.mp-team-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }));
 document.getElementById('mpJoinBtn').onclick = ()=>{
   const room=document.getElementById('mpRoomInput').value;
-  if(!room.trim()){ document.getElementById('mpStatus').textContent='Escribe un código de sala.'; return; }
   Multiplayer.connect(room);
+  Multiplayer.close();
+  startGame();
 };
-document.getElementById('mpRoomInput').addEventListener('keydown',e=>{
-  if(e.key==='Enter'){ e.preventDefault(); document.getElementById('mpJoinBtn').click(); }
-});
 document.getElementById('startBtn').onclick = startGame;
 document.getElementById('retryBtn').onclick = startGame;
 document.getElementById('startShopBtn').onclick = openShop;
@@ -4810,22 +4793,15 @@ document.getElementById('closeShop').onclick = ()=>{
 
 
 document.addEventListener('keydown', e=>{
-  const mpVisible=!document.getElementById('multiplayerScreen').classList.contains('hidden');
-  const activeEl=document.activeElement;
-  const typing=activeEl && (activeEl.tagName==='INPUT' || activeEl.tagName==='TEXTAREA' || activeEl.isContentEditable);
-  if(mpVisible && !typing && ['w','a','s','d','ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)){
-    e.preventDefault();
-    e.stopPropagation();
-    return;
-  }
-  if(e.key==='Escape' && !document.getElementById('multiplayerScreen').classList.contains('hidden')){
-    Multiplayer.close();
-    return;
+  const mpOpen=!document.getElementById('multiplayerScreen').classList.contains('hidden');
+  const active=document.activeElement;
+  if(mpOpen && active && (active.tagName==='INPUT' || active.tagName==='TEXTAREA')){
+    if(['w','a','s','d','W','A','S','D','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter'].includes(e.key)){ e.stopImmediatePropagation(); }
   }
   if(e.key==='Escape' && !document.getElementById('shopScreen').classList.contains('hidden')){
     document.getElementById('closeShop').click();
   }
-});
+}, true);
 
 document.querySelectorAll('.tab').forEach(tab=>{
   tab.onclick = ()=>{
@@ -4846,12 +4822,12 @@ document.getElementById('muteBtn').onclick = ()=>{
 };
 
 document.getElementById('pauseBtn').onclick = ()=>{
-  if(!game.running || Multiplayer.isConnected()) return;
+  if(!game.running) return;
+  if(Multiplayer.isConnected()) return;
   game.paused = !game.paused;
   document.getElementById('pauseBtn').textContent = game.paused ? '▶' : '⏸';
 };
 
-Multiplayer.setModeUI('teams');
 updateHUD();
 loadGame();
 
