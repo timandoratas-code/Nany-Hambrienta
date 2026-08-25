@@ -108,7 +108,17 @@ const http = createServer(async (req, res) => {
       res.end(payload);
       return;
     }
-    if (pathname === '/' || pathname === '/index.html') pathname = '/index.html';
+    // Serve the game shell directly. This avoids path-resolution edge cases
+    // when the service is deployed with a custom Render root directory.
+    if (pathname === '/' || pathname === '/index.html') {
+      const data = await readFile(join(__dirname, 'index.html'));
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store'
+      });
+      res.end(data);
+      return;
+    }
     const filePath = normalize(join(__dirname, pathname));
     if (!filePath.startsWith(__dirname + sep)) {
       res.writeHead(403); res.end('Forbidden'); return;
