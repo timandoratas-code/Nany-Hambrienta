@@ -203,9 +203,9 @@
   .mp-leaderboard .lb-row{display:flex;justify-content:space-between;gap:8px;color:var(--ink-light);white-space:nowrap;}
   .mp-leaderboard .lb-row.me{color:#fff;font-weight:900;}
   .mp-leaderboard .lb-left{overflow:hidden;text-overflow:ellipsis;}
-  @media (max-width:700px){.mp-hud-status{left:8px;right:auto;top:48px;font-size:8.5px;padding:4px 7px;}.mp-leaderboard{right:8px;top:158px;width:150px;font-size:8.5px;padding:6px 8px;}}
-  @media (max-height:520px) and (orientation:landscape){.mp-hud-status{top:48px;left:8px;right:auto;font-size:8px;}.mp-leaderboard{top:108px;right:8px;width:138px;font-size:8px;}}
-  @media (min-width:701px){.mp-hud-status{right:18px;left:auto;top:246px;}.mp-leaderboard{right:18px;left:auto;top:290px;width:220px;}}
+  @media (max-width:700px){.mp-hud-status{left:8px;right:auto;top:48px;font-size:8.5px;padding:4px 7px;}.mp-leaderboard{right:8px;left:auto;top:158px;bottom:auto;width:150px;font-size:8.5px;padding:6px 8px;}}
+  @media (max-height:520px) and (orientation:landscape){.mp-hud-status{top:48px;left:8px;right:auto;font-size:8px;}.mp-leaderboard{top:108px;right:8px;left:auto;width:138px;font-size:8px;}}
+  @media (min-width:701px){.mp-hud-status{right:18px;left:auto;top:246px;}.mp-leaderboard{right:18px;left:auto;top:290px;bottom:auto;width:220px;}}
   @media(max-width:600px){.mp-modes{grid-template-columns:1fr;}.mp-mode{padding:10px;}}
 
   /* ---------- overlays ---------- */
@@ -4540,7 +4540,7 @@ const Multiplayer = (()=>{
   function renderLeaderboard(){
     const el=leaderboardEl();
     if(!el) return;
-    if(!state.connected){ el.classList.add('hidden'); el.innerHTML=''; return; }
+    if(!state.connected || state.mode!=='ffa'){ el.classList.add('hidden'); el.innerHTML=''; return; }
     const me={id:state.id,name:Save.fishName||'Nany',score:Math.floor(game.score||0),team:state.team,teamName:state.teamName,power:playerPower(game.score||0)};
     const rows=[me,...[...state.players.values()].filter(p=>p.alive!==false).map(p=>({id:p.id,name:p.name||'Jugador',score:Math.floor(p.score||0),team:p.team,teamName:p.teamName,power:p.power||1}))];
     rows.sort((a,b)=>b.score-a.score);
@@ -4596,6 +4596,10 @@ const Multiplayer = (()=>{
         state.connected=true;
         state.id=msg.id;
         state.mode=msg.mode||state.mode; state.team=msg.team||null; state.teamName=msg.teamName||null;
+        if(msg.player && game.player){
+          game.player.x=Number(msg.player.x); game.player.y=Number(msg.player.y);
+          game.player.vx=0; game.player.vy=0;
+        }
         updateModeUI(state.mode);
         (msg.players||[]).forEach(p=>{
           if(!p || p.id===state.id) return;
