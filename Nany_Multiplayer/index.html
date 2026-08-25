@@ -4187,7 +4187,7 @@ function startGame(){
   game.gemCycleTimer=0; game.gemNextSpawn=rand(25,40); game.gemBurstTimer=0; game.gemSpawnedThisCycle=0;
   updateCamera();
 
-  if(!Multiplayer.isOnline()){
+  if(!Multiplayer.isConnected()){
     for(let i=0;i<320;i++) spawnFish(false);
     ensurePlankton();
     ensureFoodAroundPlayer();
@@ -4537,6 +4537,7 @@ const Multiplayer = (()=>{
   const state={
     socket:null, connected:false, connecting:false, room:null, id:null,
     mode:'teams', team:'A', teamName:'Azul', players:new Map(),
+    onReady:null, onFail:null,
     lastSend:0, sendHz:20, onlineEntities:new Map(), renderCache:[],
     renderDirty:true, serverStage:0, lastWorldAt:0, deathHandled:false
   };
@@ -4622,12 +4623,14 @@ const Multiplayer = (()=>{
     state.serverStage=Number(stage)||0;
     applySharedStage(state.serverStage);
   }
-  function connect(room){
+  function connect(room,onReady,onFail){
     room=normalizeRoom(room);
     if(state.socket){try{state.socket.close();}catch(_){} }
     state.room=room; state.connected=false; state.connecting=true; state.id=null; state.players.clear(); state.onlineEntities.clear(); game.entities=[];
+    state.onReady=typeof onReady==='function'?onReady:null;
+    state.onFail=typeof onFail==='function'?onFail:null;
     setStatus('Conectando…');
-    let ws; try{ws=new WebSocket(socketUrl());}catch(err){state.connecting=false;setStatus('No se pudo abrir la conexión');return false;}
+    let ws; try{ws=new WebSocket(socketUrl());}catch(err){state.connecting=false;state.onFail?.('No se pudo abrir la conexión');state.onFail=null;setStatus('No se pudo abrir la conexión');return false;}
     state.socket=ws;
     ws.addEventListener('open',()=>{
       const name=(Save.fishName||'Nany').trim().slice(0,18)||'Nany';
@@ -4642,6 +4645,8 @@ const Multiplayer = (()=>{
         if(msg.player&&game.player){game.player.x=msg.player.x;game.player.y=msg.player.y;game.player.vx=0;game.player.vy=0;game.score=Number(msg.player.score)||game.score;game.growthScore=Number(msg.player.growthScore)||game.growthScore;updateCamera();}
         state.players.clear(); for(const p of (msg.players||[]))if(p&&p.id!==state.id)applyPlayerSnapshot(p);
         applyWorldSnapshot(msg);updateModeUI(state.mode);setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(msg.population||1)}`,true);
+        const ready=state.onReady; state.onReady=null; state.onFail=null;
+        if(ready) ready();
       }else if(msg.type==='world'){
         state.lastWorldAt=performance.now();
         applyWorldSnapshot(msg);
@@ -4656,8 +4661,14 @@ const Multiplayer = (()=>{
       else if(msg.type==='world_stage'){onStage(Number(msg.stage)||0);}
       else if(msg.type==='error'){state.connecting=false;setStatus(msg.message||'Error del servidor');}
     });
-    ws.addEventListener('close',()=>{state.connected=false;state.connecting=false;state.id=null;state.players.clear();state.onlineEntities.clear();game.entities=[];setStatus('MULTIJUGADOR DESCONECTADO');});
-    ws.addEventListener('error',()=>setStatus('Error de conexión — puedes seguir jugando en SOLO'));
+    ws.addEventListener('close',()=>{
+      const wasConnecting=state.connecting && !state.connected;
+      const fail=state.onFail;
+      state.connected=false;state.connecting=false;state.id=null;state.players.clear();state.onlineEntities.clear();game.entities=[];
+      if(wasConnecting && fail){state.onFail=null;fail('No se pudo conectar al servidor multijugador.');}
+      setStatus(wasConnecting?'No se pudo conectar al servidor':'MULTIJUGADOR DESCONECTADO');
+    });
+    ws.addEventListener('error',()=>setStatus('Error de conexión — revisa que Render esté activo'));
     return true;
   }
   function sendState(now){
@@ -4735,9 +4746,17 @@ document.querySelectorAll('.mp-mode').forEach(btn=>btn.addEventListener('click',
 document.querySelectorAll('.mp-team-btn').forEach(btn=>btn.addEventListener('click',()=>{ document.querySelectorAll('.mp-team-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }));
 document.getElementById('mpJoinBtn').onclick = ()=>{
   const room=document.getElementById('mpRoomInput').value;
-  Multiplayer.connect(room);
-  Multiplayer.close();
-  startGame();
+  const btn=document.getElementById('mpJoinBtn');
+  btn.disabled=true;
+  Multiplayer.connect(room,()=>{
+    btn.disabled=false;
+    Multiplayer.close();
+    startGame();
+  },(message)=>{
+    btn.disabled=false;
+    const s=document.getElementById('mpStatus');
+    if(s){s.textContent=message;s.style.color='#ff6a6a';}
+  });
 };
 document.getElementById('startBtn').onclick = startGame;
 document.getElementById('retryBtn').onclick = startGame;
