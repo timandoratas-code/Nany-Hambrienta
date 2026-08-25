@@ -1146,6 +1146,7 @@ function flashSaveNotice(){
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 let W=window.innerWidth, H=window.innerHeight, DPR=Math.min(window.devicePixelRatio||1,2);
+const IS_MOBILE_DEVICE = () => window.matchMedia?.('(max-width:700px), (pointer:coarse)').matches ?? (W<=700);
 
 /* =========================================================
    WORLD + CAMERA
@@ -1179,7 +1180,8 @@ function resize(){
   const vv = window.visualViewport;
   W = Math.round(vv ? vv.width : window.innerWidth);
   H = Math.round(vv ? vv.height : window.innerHeight);
-  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  // En móvil limitamos la resolución interna para evitar congelamientos por GPU/memoria.
+  DPR = IS_MOBILE_DEVICE() ? 1 : Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = Math.max(1, Math.round(W*DPR));
   canvas.height = Math.max(1, Math.round(H*DPR));
   canvas.style.width=W+'px';
@@ -3954,22 +3956,17 @@ function drawFloaters(){
 function drawDangerGlow(){
   if(!Save.radar) return;
   const p = game.player;
-  const mobile = window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
-  let checked = 0;
   for(const e of game.entities){
     if(e.coin || e.hazard) continue;
-    if(mobile && checked >= 40) break;
-    const d = dist(e,p);
-    if(d < 260 && fishHitbox(e) > playerHitbox()){
+    if(fishHitbox(e) > playerHitbox() && dist(e,p) < 260){
       ctx.save();
-      ctx.globalAlpha = 0.5*(1-d/260);
+      ctx.globalAlpha = 0.5*(1-dist(e,p)/260);
       ctx.strokeStyle = '#ff3b3b';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(e.x,e.y,e.size*1.4,0,Math.PI*2);
       ctx.stroke();
       ctx.restore();
-      checked++;
     }
   }
 }
@@ -3977,16 +3974,14 @@ function drawDangerGlow(){
 
 const minimap = document.getElementById('minimap');
 const miniCtx = minimap.getContext('2d');
-
-let minimapFrameCounter = 0;
+let lastMinimapRender=0;
 function renderMinimap(){
+  if(IS_MOBILE_DEVICE() && performance.now()-lastMinimapRender<120) return;
+  lastMinimapRender=performance.now();
   if(!game.player){
     miniCtx.clearRect(0,0,minimap.width,minimap.height);
     return;
   }
-  const mobile = window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
-  minimapFrameCounter++;
-  if(mobile && minimapFrameCounter % 6 !== 0) return;
   const mw=minimap.width, mh=minimap.height;
   miniCtx.clearRect(0,0,mw,mh);
   miniCtx.fillStyle='rgba(2,11,20,.92)';
@@ -4091,20 +4086,18 @@ function render(){
     drawWorldGrid();
     drawDangerGlow();
 
-    const mobile = window.matchMedia && window.matchMedia('(pointer:coarse)').matches;
+    const mobile = IS_MOBILE_DEVICE();
     const viewW = W / z, viewH = H / z;
-    const margin = mobile ? 260 : 420;
-    const leftV = camera.x - margin, rightV = camera.x + viewW + margin;
-    const topV = camera.y - margin, bottomV = camera.y + viewH + margin;
-    let visible;
-    if(mobile){
-      visible = [];
-      for(const e of game.entities){
-        if(e.x>=leftV && e.x<=rightV && e.y>=topV && e.y<=bottomV) visible.push(e);
-      }
+    const margin = mobile ? 180 : 320;
+    const minX = camera.x - margin, maxX = camera.x + viewW + margin;
+    const minY = camera.y - margin, maxY = camera.y + viewH + margin;
+    let visible = game.entities.filter(e => e.x >= minX && e.x <= maxX && e.y >= minY && e.y <= maxY);
+    // En móvil no procesamos cientos de entidades fuera de pantalla.
+    if(mobile && visible.length > 90){
+      visible.sort((a,b)=>((a.x-game.player.x)**2+(a.y-game.player.y)**2)-((b.x-game.player.x)**2+(b.y-game.player.y)**2));
+      visible = visible.slice(0,90);
+    } else if(!mobile){
       visible.sort((a,b)=>a.size-b.size);
-    }else{
-      visible = game.entities.slice().sort((a,b)=>a.size-b.size);
     }
     for(const e of visible){
       if(e.coin) drawCoin(e); else if(e.gemFish) drawGemFish(e); else drawFish(e);
