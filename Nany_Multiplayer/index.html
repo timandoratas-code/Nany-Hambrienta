@@ -1146,7 +1146,6 @@ function flashSaveNotice(){
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 let W=window.innerWidth, H=window.innerHeight, DPR=Math.min(window.devicePixelRatio||1,2);
-const IS_MOBILE_DEVICE = () => window.matchMedia?.('(max-width:700px), (pointer:coarse)').matches ?? (W<=700);
 
 /* =========================================================
    WORLD + CAMERA
@@ -1180,8 +1179,7 @@ function resize(){
   const vv = window.visualViewport;
   W = Math.round(vv ? vv.width : window.innerWidth);
   H = Math.round(vv ? vv.height : window.innerHeight);
-  // En móvil limitamos la resolución interna para evitar congelamientos por GPU/memoria.
-  DPR = IS_MOBILE_DEVICE() ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = Math.max(1, Math.round(W*DPR));
   canvas.height = Math.max(1, Math.round(H*DPR));
   canvas.style.width=W+'px';
@@ -3124,7 +3122,7 @@ function update(dt){
     else{ensureLavaThreats();updateGemSpawning(dt);const cfg=levelCfg();game.spawnTimer-=dt;if(game.spawnTimer<=0&&game.entities.length<420){const batch=game.entities.length<180?(game.level===1&&game.level2Time<30?4:5):3;const edgeChance=(game.level===0&&game.score<1000)?.30:.08;for(let i=0;i<batch;i++)spawnFish(Math.random()<edgeChance);game.spawnTimer=cfg.spawnRate*rand(.7,1.15);}ensurePlankton();ensureFoodAroundPlayer();ensureCornerThreats(dt);ensureEcologyMix();rebalanceFishThreats();ensureEcologyMix();}
     for(let i=game.entities.length-1;i>=0;i--){const e=game.entities[i];if(!Number.isFinite(e.x)||!Number.isFinite(e.y)||!Number.isFinite(e.vx)||!Number.isFinite(e.vy)){game.entities.splice(i,1);continue;}updateEntity(e,dt);}
     updatePet(dt);if(!game.player._takingDamage)handleCollisions();
-  }else{handleOnlineBossCollision();}
+  }else{updateSharedWorldInterpolation(dt);handleOnlineBossCollision();}
 
   for(let i=game.particles.length-1;i>=0;i--){
     const pt = game.particles[i];
@@ -3974,10 +3972,8 @@ function drawDangerGlow(){
 
 const minimap = document.getElementById('minimap');
 const miniCtx = minimap.getContext('2d');
-let lastMinimapRender=0;
+
 function renderMinimap(){
-  if(IS_MOBILE_DEVICE() && performance.now()-lastMinimapRender<120) return;
-  lastMinimapRender=performance.now();
   if(!game.player){
     miniCtx.clearRect(0,0,minimap.width,minimap.height);
     return;
@@ -4086,21 +4082,17 @@ function render(){
     drawWorldGrid();
     drawDangerGlow();
 
-    const mobile = IS_MOBILE_DEVICE();
-    const viewW = W / z, viewH = H / z;
-    const margin = mobile ? 180 : 320;
-    const minX = camera.x - margin, maxX = camera.x + viewW + margin;
-    const minY = camera.y - margin, maxY = camera.y + viewH + margin;
-    let visible = game.entities.filter(e => e.x >= minX && e.x <= maxX && e.y >= minY && e.y <= maxY);
-    // En móvil no procesamos cientos de entidades fuera de pantalla.
-    if(mobile && visible.length > 90){
-      visible.sort((a,b)=>((a.x-game.player.x)**2+(a.y-game.player.y)**2)-((b.x-game.player.x)**2+(b.y-game.player.y)**2));
-      visible = visible.slice(0,90);
-    } else if(!mobile){
-      visible.sort((a,b)=>a.size-b.size);
-    }
-    for(const e of visible){
-      if(e.coin) drawCoin(e); else if(e.gemFish) drawGemFish(e); else drawFish(e);
+    const viewMargin = 220 / z;
+    const viewLeft = camera.x - viewMargin;
+    const viewTop = camera.y - viewMargin;
+    const viewRight = camera.x + W / z + viewMargin;
+    const viewBottom = camera.y + H / z + viewMargin;
+    for(const e of game.entities){
+      const r = Math.max(10, Number(e.size)||10);
+      const x = e.renderX ?? e.x;
+      const y = e.renderY ?? e.y;
+      if(x+r<viewLeft || x-r>viewRight || y+r<viewTop || y-r>viewBottom) continue;
+      if(e.coin) drawCoin({...e,x,y}); else if(e.gemFish) drawGemFish({...e,x,y}); else drawFish({...e,x,y});
     }
 
     if(!game.deathAnim || !game.deathAnim.active) drawPlayer();
@@ -4506,9 +4498,35 @@ function openShop(){
   renderShop();
 }
 
-function mapServerEntity(e){return {...e,behavior:e.ecologyRole==='predator'?'aggro':'passive',wobble:0,finPhase:0,life:0,_chasing:false,_attackCooldown:0,_wanderTimer:999999,_wanderAngle:Math.atan2(e.vy||0,e.vx||1),_vulnerableTail:false,_hitCooldown:0};}
-function syncSharedWorld(world){if(!Array.isArray(world))return;const old=new Map(game.entities.map(e=>[e.id,e]));game.entities=world.map(r=>{const e=mapServerEntity(r),o=old.get(r.id);if(o){e.renderX=o.renderX;e.renderY=o.renderY;}return e;});}
-function removeSharedEntity(id){game.entities=game.entities.filter(e=>e.id!==id);}
+function mapServerEntity(r){return {...r,behavior:r.ecologyRole==='predator'?'aggro':'passive',wobble:0,finPhase:0,life:0,renderX:Number(r.x)||0,renderY:Number(r.y)||0,targetX:Number(r.x)||0,targetY:Number(r.y)||0,_chasing:false,_attackCooldown:0,_wanderTimer:999999,_wanderAngle:Math.atan2(r.vy||0,r.vx||1),_vulnerableTail:false,_hitCooldown:0};}
+function syncSharedWorld(world){
+  if(!Array.isArray(world)) return;
+  const incoming=new Set();
+  const byId=new Map();
+  for(const e of game.entities) if(e && e.id) byId.set(e.id,e);
+  for(const r of world){
+    if(!r || !r.id) continue;
+    incoming.add(r.id);
+    const e=byId.get(r.id);
+    if(e){
+      e.type=r.type; e.renderKey=r.renderKey; e.size=r.size; e.power=r.power; e.points=r.points; e.color=r.color; e.speed=r.speed;
+      e.x=Number(r.x)||0; e.y=Number(r.y)||0; e.vx=Number(r.vx)||0; e.vy=Number(r.vy)||0; e.angle=Number(r.angle)||0; e.hazard=r.hazard||null; e.ecologyRole=r.ecologyRole||null;
+      e.boss=!!r.boss; e.bossType=r.bossType||null; e.gemFish=!!r.gemFish; e.coin=!!r.coin; e.special=r.special||null; e.bossHits=r.bossHits||0;
+      e.targetX=e.x; e.targetY=e.y;
+    }else{
+      game.entities.push(mapServerEntity(r));
+    }
+  }
+  for(let i=game.entities.length-1;i>=0;i--){if(!incoming.has(game.entities[i].id)) game.entities.splice(i,1);}
+  game.entities.sort((a,b)=>(a.size||0)-(b.size||0));
+}
+function updateSharedWorldInterpolation(dt){
+  for(const e of game.entities){
+    e.renderX=lerp(e.renderX??e.x,e.targetX??e.x,Math.min(1,dt*8));
+    e.renderY=lerp(e.renderY??e.y,e.targetY??e.y,Math.min(1,dt*8));
+  }
+}
+function removeSharedEntity(id){const i=game.entities.findIndex(e=>e.id===id);if(i>=0)game.entities.splice(i,1);}
 /* =========================================================
    MULTIPLAYER
    -----------------------------------------------------------
@@ -4577,6 +4595,7 @@ const Multiplayer = (()=>{
     room=normalizeRoom(room);
     if(state.socket){ try{state.socket.close();}catch(_){} }
     state.room=room; state.connected=false; state.id=null; state.players.clear();
+    game.entities=[];
     setStatus('Conectando…');
     let ws;
     try{ ws=new WebSocket(socketUrl()); }catch(err){ setStatus('No se pudo abrir la conexión'); return false; }
@@ -4603,6 +4622,7 @@ const Multiplayer = (()=>{
           game.player.vx=0; game.player.vy=0;
           updateCamera();
         }
+        if(msg.world) syncSharedWorld(msg.world);
         updateModeUI(state.mode);
         (msg.players||[]).forEach(p=>{
           if(!p || p.id===state.id) return;
@@ -4624,6 +4644,7 @@ const Multiplayer = (()=>{
           });
         });
         for(const id of state.players.keys()) if(!incoming.has(id)) state.players.delete(id);
+        if(msg.worldSync) syncSharedWorld(msg.worldSync);
         state.mode=msg.mode||state.mode; updateModeUI(state.mode);
         setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(msg.population||state.players.size+1)}`,true);
       }else if(msg.type==='player_joined'){
