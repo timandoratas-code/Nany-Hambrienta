@@ -1,9 +1,8 @@
 services:
   - type: web
-    name: nany-hambrienta-multiplayer
-    runtime: node
-    plan: free
+    name: nany-hambrienta
+    env: node
+    rootDir: Nany_Multiplayer
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
-    autoDeployTrigger: commit
