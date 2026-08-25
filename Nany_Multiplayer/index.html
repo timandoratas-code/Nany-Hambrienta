@@ -374,11 +374,7 @@
   .dev-code:focus{border-color:var(--bio-cyan);}
   .dev-status{min-height:20px;font-size:11px;color:var(--ink-dim);}
   #minimap{position:absolute;right:18px;top:66px;width:170px;height:170px;border:1px solid rgba(77,255,240,.2);border-radius:12px;background:rgba(2,11,20,.72);z-index:9;pointer-events:none;backdrop-filter:blur(5px);}
-  #mpArrowLayer{position:absolute;inset:0;width:100%;height:100%;z-index:80;pointer-events:none;overflow:hidden;}
-  .mp-arrow{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;will-change:transform;}
-  .mp-arrow-shape{position:absolute;left:0;top:0;width:0;height:0;border-top:13px solid transparent;border-bottom:13px solid transparent;border-left:28px solid currentColor;transform:translate(-14px,-13px);filter:drop-shadow(0 0 7px currentColor);}
-  .mp-arrow-label{position:absolute;left:0;top:0;transform:translate(-50%,18px);font:700 10px/1 'Space Mono',monospace;white-space:nowrap;text-shadow:0 2px 4px #000;color:#fff;}
-  @media (max-width:700px){.mp-arrow-shape{border-top-width:10px;border-bottom-width:10px;border-left-width:22px;transform:translate(-11px,-10px);filter:drop-shadow(0 0 6px currentColor);}.mp-arrow-label{font-size:8px;transform:translate(-50%,14px);}}
+  #mpArrowLayer{position:absolute;inset:0;width:100%;height:100%;z-index:30;pointer-events:none;}
   @media (max-width:520px){#minimap{width:125px;height:125px;top:62px;right:10px;}}
 
   .row{display:flex;gap:12px;flex-wrap:wrap;}
@@ -775,31 +771,6 @@
     #minimap{ width:48px !important; height:48px !important; top:36px !important; }
   }
 
-  /* OPTIMIZACIÓN MÓVIL (congelamiento): backdrop-filter:blur() obliga al
-     navegador a recomponer el desenfoque de TODO lo que hay detrás del
-     elemento en cada pintado de pantalla. Con el canvas del juego
-     repintándose 30-60 veces por segundo justo debajo, cada panel del HUD
-     con blur (marcador, minimapa, estado/leaderboard multijugador) fuerza
-     ese recálculo entero cada frame. En Safari/Chrome de iOS y Android esto
-     es una de las causas más comunes de congelamiento TOTAL de la pestaña,
-     a menudo peor que el propio dibujo del canvas.
-     Aquí quitamos el blur SOLO en móvil (pointer:coarse o viewport chico) y
-     lo compensamos con un fondo un poco más opaco para que los paneles
-     sigan siendo legibles. En escritorio no cambia nada. */
-  @media (pointer:coarse), (max-width:700px){
-    .hud-pill,
-    .mp-hud-status,
-    .mp-leaderboard,
-    #minimap{
-      backdrop-filter:none !important;
-      -webkit-backdrop-filter:none !important;
-    }
-    .hud-pill{ background:rgba(4,20,31,0.94); }
-    .mp-hud-status{ background:rgba(4,20,31,0.92); }
-    .mp-leaderboard{ background:rgba(4,20,31,0.92); }
-    #minimap{ background:rgba(2,11,20,0.94); }
-  }
-
 </style>
 </head>
 <body>
@@ -844,7 +815,7 @@
     <div id="sprintBar"><div id="sprintFill"></div></div>
   </div>
   <canvas id="minimap" width="170" height="170" aria-label="Minimapa"></canvas>
-  <div id="mpArrowLayer" aria-hidden="true"></div>
+  <canvas id="mpArrowLayer" aria-hidden="true"></canvas>
   <div id="multiplayerStatus" class="mp-hud-status hidden">EQUIPOS · SALA ABISMO01 · 1/8</div>
   <div id="mpLeaderboard" class="mp-leaderboard hidden" aria-live="polite"></div>
   <div id="saveNotice">Progreso guardado</div>
@@ -1170,12 +1141,7 @@ function flashSaveNotice(){
    ========================================================= */
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-// Alias estable al contexto principal. drawFishBody puede recibir un
-// contexto alternativo (para "hornear" sprites de peces en un canvas
-// off-screen); por defecto sigue apuntando al canvas de siempre.
-const mainCtx = ctx;
 let W=window.innerWidth, H=window.innerHeight, DPR=Math.min(window.devicePixelRatio||1,2);
-const IS_MOBILE_DEVICE = () => window.matchMedia?.('(max-width:700px), (pointer:coarse)').matches ?? (W<=700);
 
 /* =========================================================
    WORLD + CAMERA
@@ -1209,8 +1175,7 @@ function resize(){
   const vv = window.visualViewport;
   W = Math.round(vv ? vv.width : window.innerWidth);
   H = Math.round(vv ? vv.height : window.innerHeight);
-  // En móvil limitamos la resolución interna para evitar congelamientos por GPU/memoria.
-  DPR = IS_MOBILE_DEVICE() ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = Math.max(1, Math.round(W*DPR));
   canvas.height = Math.max(1, Math.round(H*DPR));
   canvas.style.width=W+'px';
@@ -1994,7 +1959,7 @@ function canPlayerEatFish(e){
   return !!e.gemFish || (!e.hazard && e.ecologyRole==='prey' && fishHitbox(e) < playerHitbox()*0.96);
 }
 function canFishEatPlayer(e){
-  return !e.gemFish && e.ecologyRole==='predator' && fishHitbox(e) >= playerHitbox()*1.04;
+  return !e.gemFish && e.ecologyRole==='predator' && !!e._chasing && fishHitbox(e) >= playerHitbox()*1.04;
 }
 function canPetEatFish(e){
   return !e.coin && !e.hazard && game.petEntity && fishHitbox(e) < game.petEntity.hitbox;
@@ -3147,13 +3112,39 @@ function update(dt){
   updateCamera();
   updateLevel();
 
-  const onlineWorld=Multiplayer.isConnected();
-  if(!onlineWorld){
-    if(game.bossActive){const boss=game.entities.find(e=>e.boss);if(boss)updateBoss(boss,dt);}
-    else{ensureLavaThreats();updateGemSpawning(dt);const cfg=levelCfg();game.spawnTimer-=dt;if(game.spawnTimer<=0&&game.entities.length<420){const batch=game.entities.length<180?(game.level===1&&game.level2Time<30?4:5):3;const edgeChance=(game.level===0&&game.score<1000)?.30:.08;for(let i=0;i<batch;i++)spawnFish(Math.random()<edgeChance);game.spawnTimer=cfg.spawnRate*rand(.7,1.15);}ensurePlankton();ensureFoodAroundPlayer();ensureCornerThreats(dt);ensureEcologyMix();rebalanceFishThreats();ensureEcologyMix();}
-    for(let i=game.entities.length-1;i>=0;i--){const e=game.entities[i];if(!Number.isFinite(e.x)||!Number.isFinite(e.y)||!Number.isFinite(e.vx)||!Number.isFinite(e.vy)){game.entities.splice(i,1);continue;}updateEntity(e,dt);}
-    updatePet(dt);if(!game.player._takingDamage)handleCollisions();
-  }else{handleOnlineBossCollision();}
+  if(game.bossActive){
+    const boss=game.entities.find(e=>e.boss);
+    if(boss) updateBoss(boss,dt);
+  }else{
+    ensureLavaThreats();
+    updateGemSpawning(dt);
+
+    const cfg = levelCfg();
+    game.spawnTimer -= dt;
+    if(game.spawnTimer <= 0 && game.entities.length < 420){
+      const batch = game.entities.length < 180 ? (game.level===1 && game.level2Time<30 ? 4 : 5) : 3;
+      const edgeChance = (game.level===0 && game.score<1000) ? 0.30 : 0.08;
+      for(let i=0;i<batch;i++) spawnFish(Math.random()<edgeChance);
+      game.spawnTimer = cfg.spawnRate * rand(0.7,1.15);
+    }
+    ensurePlankton();
+    ensureFoodAroundPlayer();
+    ensureCornerThreats(dt);
+    ensureEcologyMix();
+    rebalanceFishThreats();
+    ensureEcologyMix();
+  }
+
+  for(let i=game.entities.length-1;i>=0;i--){
+    const e=game.entities[i];
+    if(!Number.isFinite(e.x)||!Number.isFinite(e.y)||!Number.isFinite(e.vx)||!Number.isFinite(e.vy)){
+      game.entities.splice(i,1);
+      continue;
+    }
+    updateEntity(e,dt);
+  }
+  updatePet(dt);
+  if(!game.player._takingDamage) handleCollisions();
 
   for(let i=game.particles.length-1;i>=0;i--){
     const pt = game.particles[i];
@@ -3272,10 +3263,7 @@ function drawBackground(){
 
 // Generic realistic fish body renderer used by all species,
 // with per-species accent details layered on top.
-function drawFishBody(e, opts, simplify, targetCtx){
-  // Sombra local: todo lo que sigue usa "ctx" como siempre, pero puede
-  // apuntar a un canvas off-screen cuando se está horneando un sprite.
-  const ctx = targetCtx || mainCtx;
+function drawFishBody(e, opts){
   const s = e.size;
   const angle = Math.atan2(e.vy, e.vx) || 0;
   const wob = Math.sin(e.wobble*2.2)*0.08;
@@ -3360,12 +3348,7 @@ function drawFishBody(e, opts, simplify, targetCtx){
   ctx.restore();
 
   // scale texture (arcs) for mid/large fish
-  // OPTIMIZACIÓN MÓVIL: este loop dibuja hasta 15 arcos+trazos por pez y es
-  // puramente decorativo (textura de escamas). En móvil, con decenas de
-  // peces en pantalla, era uno de los mayores generadores de llamadas de
-  // canvas por frame. Se omite SOLO cuando simplify=true (móvil), nunca en
-  // escritorio.
-  if(!simplify && !opts.noScales && s > 8){
+  if(!opts.noScales && s > 8){
     ctx.save();
     ctx.globalAlpha = 0.18;
     ctx.strokeStyle = dark;
@@ -3436,9 +3419,6 @@ function drawFishBody(e, opts, simplify, targetCtx){
   }
 
   // bioluminescent lure (monster / deep-sea)
-  // OPTIMIZACIÓN MÓVIL: shadowBlur es una de las operaciones de canvas más
-  // costosas en GPUs móviles. Mantenemos el hilo del anzuelo (barato) pero
-  // en móvil quitamos el resplandor difuminado; en escritorio no cambia nada.
   if(opts.lure){
     const pulse = 0.6+Math.sin(game.time*4)*0.4;
     ctx.save();
@@ -3449,7 +3429,8 @@ function drawFishBody(e, opts, simplify, targetCtx){
     ctx.quadraticCurveTo(bodyLen*0.55,-bodyH*1.5, bodyLen*0.62,-bodyH*1.7);
     ctx.stroke();
     ctx.fillStyle = `rgba(255,230,150,${0.5+pulse*0.4})`;
-    if(!simplify){ ctx.shadowColor = '#ffe696'; ctx.shadowBlur = 12+pulse*10; }
+    ctx.shadowColor = '#ffe696';
+    ctx.shadowBlur = 12+pulse*10;
     ctx.beginPath();
     ctx.arc(bodyLen*0.62,-bodyH*1.7, s*0.14+pulse*1.5, 0, Math.PI*2);
     ctx.fill();
@@ -3461,7 +3442,8 @@ function drawFishBody(e, opts, simplify, targetCtx){
   if(opts.fireGlow){
     ctx.save();
     ctx.globalAlpha = 0.5;
-    if(!simplify){ ctx.shadowColor = '#ff8a3d'; ctx.shadowBlur = 18; }
+    ctx.shadowColor = '#ff8a3d';
+    ctx.shadowBlur = 18;
     ctx.fillStyle = 'rgba(255,138,61,0.35)';
     ctx.beginPath();
     ctx.ellipse(-bodyLen*0.4,0, bodyLen*0.35, bodyH*0.5, 0,0,Math.PI*2);
@@ -3551,65 +3533,10 @@ const FISH_RENDER_OPTS = {
   lava:     { fireGlow:true, noScales:true, noGill:true, teeth:true, spikes:true, ugly:true }
 };
 
-function drawFish(e, simplify){
+function drawFish(e){
   if(e.boss){ drawBoss(e); return; }
   const opts = FISH_RENDER_OPTS[e.renderKey || e.type] || {};
-  drawFishBody(e, opts, simplify);
-}
-
-/* =========================================================
-   SPRITE CACHE PARA MÓVIL (fix real del congelamiento en Safari)
-   -----------------------------------------------------------
-   El motor de canvas de WebKit/Safari es mucho más lento que el de Chrome
-   para crear gradientes y para shadowBlur. drawFishBody crea 2 gradientes
-   nuevos y hace ~10-25 llamadas de dibujo POR PEZ, EN CADA FRAME. Con
-   decenas de peces en pantalla eso es lo que congela Safari, incluso ya
-   con el límite de 30 FPS y el resto de optimizaciones anteriores.
-
-   La solución real es no rehacer ese trabajo cada frame: cada combinación
-   de (tipo de pez + tamaño redondeado + color) se dibuja UNA sola vez a
-   máxima calidad en un canvas invisible ("sprite"), y luego cada frame
-   solo se hace ctx.drawImage(sprite) — una operación barata y bien
-   optimizada incluso en WebKit. El pez se ve exactamente igual que en
-   escritorio; solo cambia CÓMO se pinta, no CÓMO se ve.
-
-   Esto se usa SOLO en móvil. En escritorio drawFish() se sigue llamando
-   exactamente como siempre, sin pasar por esta capa.
-   ========================================================= */
-const mobileFishSpriteCache = new Map();
-
-function bakeFishSprite(renderKey, sizeBucket, color, opts){
-  const dim = Math.max(24, Math.ceil(sizeBucket*6.5));
-  const off = document.createElement('canvas');
-  off.width = dim; off.height = dim;
-  const offCtx = off.getContext('2d');
-  // Pez "de muestra" apuntando hacia +X (ángulo 0), pose estática
-  // (wobble/finPhase en 0) centrado en el canvas off-screen. La rotación
-  // real de cada instancia se aplica después, al pegar el sprite.
-  const sampleEntity = { x: dim/2, y: dim/2, vx: 1, vy: 0, size: sizeBucket, color, wobble: 0, finPhase: 0 };
-  drawFishBody(sampleEntity, opts, false, offCtx); // simplify=false: calidad completa, se paga UNA sola vez
-  return off;
-}
-
-function drawFishSprite(e){
-  if(e.boss){ drawBoss(e); return; }
-  const renderKey = e.renderKey || e.type;
-  const opts = FISH_RENDER_OPTS[renderKey] || {};
-  // Redondear tamaño a buckets de 2 unidades para no generar un sprite
-  // distinto por cada pez individual (el tamaño varía un poco por instancia).
-  const sizeBucket = Math.max(2, Math.round(e.size/2)*2);
-  const key = renderKey+'_'+sizeBucket+'_'+e.color;
-  let sprite = mobileFishSpriteCache.get(key);
-  if(!sprite){
-    sprite = bakeFishSprite(renderKey, sizeBucket, e.color, opts);
-    mobileFishSpriteCache.set(key, sprite);
-  }
-  const angle = Math.atan2(e.vy, e.vx) || 0;
-  ctx.save();
-  ctx.translate(e.x, e.y);
-  ctx.rotate(angle);
-  ctx.drawImage(sprite, -sprite.width/2, -sprite.height/2);
-  ctx.restore();
+  drawFishBody(e, opts);
 }
 
 function drawBoss(e){
@@ -4067,10 +3994,8 @@ function drawDangerGlow(){
 
 const minimap = document.getElementById('minimap');
 const miniCtx = minimap.getContext('2d');
-let lastMinimapRender=0;
+
 function renderMinimap(){
-  if(IS_MOBILE_DEVICE() && performance.now()-lastMinimapRender<120) return;
-  lastMinimapRender=performance.now();
   if(!game.player){
     miniCtx.clearRect(0,0,minimap.width,minimap.height);
     return;
@@ -4102,7 +4027,7 @@ function renderMinimap(){
   miniCtx.strokeRect(Math.max(0,px-2),Math.max(0,py-2),4,4);
 }
 
-function drawWorldGrid(mobile){
+function drawWorldGrid(){
   // Cuadrícula anclada al MUNDO: al nadar, las líneas se desplazan
   // respecto a la pantalla y hacen evidente que la cámara está recorriendo
   // un espacio grande. Es deliberadamente tenue para no competir con los peces.
@@ -4147,20 +4072,15 @@ function drawWorldGrid(mobile){
 
   // Brillo ambiental muy sutil en el centro de cada celda para que el fondo
   // no se vea plano, manteniendo el estilo oscuro del abismo.
-  // OPTIMIZACIÓN MÓVIL: este gradiente cubre toda la pantalla y se creaba
-  // desde cero en cada frame; su efecto visual es casi imperceptible
-  // (alpha 0.018 máximo). Se omite solo en móvil; en escritorio se ve igual.
-  if(!mobile){
-    const glow = ctx.createRadialGradient(
-      camera.x + W/2, camera.y + H/2, 0,
-      camera.x + W/2, camera.y + H/2, Math.max(W,H)*0.72
-    );
-    glow.addColorStop(0,'rgba(77,255,240,0.018)');
-    glow.addColorStop(0.65,'rgba(77,255,240,0.006)');
-    glow.addColorStop(1,'rgba(77,255,240,0)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(camera.x, camera.y, W/getViewZoom(), H/getViewZoom());
-  }
+  const glow = ctx.createRadialGradient(
+    camera.x + W/2, camera.y + H/2, 0,
+    camera.x + W/2, camera.y + H/2, Math.max(W,H)*0.72
+  );
+  glow.addColorStop(0,'rgba(77,255,240,0.018)');
+  glow.addColorStop(0.65,'rgba(77,255,240,0.006)');
+  glow.addColorStop(1,'rgba(77,255,240,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(camera.x, camera.y, W/getViewZoom(), H/getViewZoom());
   ctx.restore();
 }
 
@@ -4179,32 +4099,14 @@ function render(){
     ctx.scale(z,z);
     ctx.translate(-(camera.x + W/(2*z)), -(camera.y + H/(2*z)));
 
-    const mobile = IS_MOBILE_DEVICE();
-
     // La cuadrícula vive en coordenadas del mundo, no de la pantalla.
     // Por eso se mueve de forma natural cuando el jugador nada.
-    drawWorldGrid(mobile);
+    drawWorldGrid();
     drawDangerGlow();
 
-    const viewW = W / z, viewH = H / z;
-    const margin = mobile ? 180 : 320;
-    const minX = camera.x - margin, maxX = camera.x + viewW + margin;
-    const minY = camera.y - margin, maxY = camera.y + viewH + margin;
-    let visible = game.entities.filter(e => e.x >= minX && e.x <= maxX && e.y >= minY && e.y <= maxY);
-    // En móvil no procesamos cientos de entidades fuera de pantalla.
-    // Bajado de 90 a 65: cada pez de más en móvil cuesta ~2 gradientes +
-    // ~10-25 llamadas de canvas, así que este número pesa mucho en el
-    // congelamiento. Sigue siendo un océano lleno de vida, solo prioriza
-    // las entidades más cercanas al jugador.
-    const MOBILE_ENTITY_CAP = 65;
-    if(mobile && visible.length > MOBILE_ENTITY_CAP){
-      visible.sort((a,b)=>((a.x-game.player.x)**2+(a.y-game.player.y)**2)-((b.x-game.player.x)**2+(b.y-game.player.y)**2));
-      visible = visible.slice(0,MOBILE_ENTITY_CAP);
-    } else if(!mobile){
-      visible.sort((a,b)=>a.size-b.size);
-    }
-    for(const e of visible){
-      if(e.coin) drawCoin(e); else if(e.gemFish) drawGemFish(e); else if(mobile) drawFishSprite(e); else drawFish(e);
+    const sorted = game.entities.slice().sort((a,b)=>a.size-b.size);
+    for(const e of sorted){
+      if(e.coin) drawCoin(e); else if(e.gemFish) drawGemFish(e); else drawFish(e);
     }
 
     if(!game.deathAnim || !game.deathAnim.active) drawPlayer();
@@ -4610,9 +4512,6 @@ function openShop(){
   renderShop();
 }
 
-function mapServerEntity(e){return {...e,behavior:e.ecologyRole==='predator'?'aggro':'passive',wobble:0,finPhase:0,life:0,_chasing:false,_attackCooldown:0,_wanderTimer:999999,_wanderAngle:Math.atan2(e.vy||0,e.vx||1),_vulnerableTail:false,_hitCooldown:0};}
-function syncSharedWorld(world){if(!Array.isArray(world))return;const old=new Map(game.entities.map(e=>[e.id,e]));game.entities=world.map(r=>{const e=mapServerEntity(r),o=old.get(r.id);if(o){e.renderX=o.renderX;e.renderY=o.renderY;}return e;});}
-function removeSharedEntity(id){game.entities=game.entities.filter(e=>e.id!==id);}
 /* =========================================================
    MULTIPLAYER
    -----------------------------------------------------------
@@ -4648,10 +4547,11 @@ const Multiplayer = (()=>{
     const me={id:state.id,name:Save.fishName||'Nany',score:Math.floor(game.score||0),team:state.team,teamName:state.teamName,power:playerPower(game.score||0)};
     const rows=[me,...[...state.players.values()].filter(p=>p.alive!==false).map(p=>({id:p.id,name:p.name||'Jugador',score:Math.floor(p.score||0),team:p.team,teamName:p.teamName,power:p.power||1}))];
     rows.sort((a,b)=>b.score-a.score);
-    const top=rows.slice(0,3);
-    el.innerHTML=`<div class="lb-title">CLASIFICACIÓN</div>`+top.map((p,i)=>{
+    const top=rows.slice(0,8);
+    el.innerHTML=`<div class="lb-title">${modeLabel(state.mode)} · CLASIFICACIÓN</div>`+top.map((p,i)=>{
+      const team=state.mode==='teams' ? ` <span style="opacity:.7">${p.teamName||'Equipo'}</span>` : '';
       const meClass=p.id===state.id?' me':'';
-      return `<div class="lb-row${meClass}"><span class="lb-left">${i+1}. ${escapeHtml(p.name)}</span><span>${p.score}</span></div>`;
+      return `<div class="lb-row${meClass}"><span class="lb-left">${i+1}. ${escapeHtml(p.name)}${team}</span><span>${p.score}</span></div>`;
     }).join('');
     el.classList.remove('hidden');
   }
@@ -4775,7 +4675,6 @@ const Multiplayer = (()=>{
     const edgePad=28;
     const w=W, h=H;
 
-    const isMobileNow = IS_MOBILE_DEVICE();
     for(const p of state.players.values()){
       p.renderX=lerp(p.renderX??p.targetX,p.targetX??p.x,0.22);
       p.renderY=lerp(p.renderY??p.targetY,p.targetY??p.y,0.22);
@@ -4784,32 +4683,13 @@ const Multiplayer = (()=>{
       const isTeam = state.mode==='teams';
       const sameTeam = isTeam && p.team && state.team && p.team===state.team;
       const pc = isTeam ? (p.team==='A' ? '#5ea7ff' : '#ff6a6a') : '#a084ff';
+      const ent={x:p.renderX,y:p.renderY,vx:Math.cos(p.angle||0)*2,vy:Math.sin(p.angle||0)*2,size:s,color:pc,wobble:game.time+dt,finPhase:game.time*6};
       ctx.save();
       ctx.globalAlpha=.92;
-      // OPTIMIZACIÓN MÓVIL: shadowBlur en el halo de cada jugador remoto es
-      // caro en Safari; en móvil se dibuja el anillo sin difuminado.
-      if(!isMobileNow){ ctx.shadowColor=pc; ctx.shadowBlur=12; }
+      ctx.shadowColor=pc; ctx.shadowBlur=12;
       ctx.beginPath(); ctx.arc(p.renderX,p.renderY,s*1.02,0,Math.PI*2); ctx.strokeStyle=pc; ctx.globalAlpha=.42; ctx.lineWidth=sameTeam?2.5:1.5; ctx.stroke();
       ctx.restore();
-      const angle = p.angle||0;
-      if(isMobileNow){
-        // Mismo truco de sprite cacheado que la fauna: solo hay 3 colores
-        // posibles de jugador remoto, así que la variedad de sprites es
-        // mínima y el costo por frame pasa de "dibujar un pez completo x7"
-        // a "pegar una imagen x7".
-        const sizeBucket = Math.max(2, Math.round(s/2)*2);
-        const key = 'remote_'+sizeBucket+'_'+pc;
-        let sprite = mobileFishSpriteCache.get(key);
-        if(!sprite){ sprite = bakeFishSprite('remote', sizeBucket, pc, {}); mobileFishSpriteCache.set(key, sprite); }
-        ctx.save();
-        ctx.translate(p.renderX, p.renderY);
-        ctx.rotate(angle);
-        ctx.drawImage(sprite, -sprite.width/2, -sprite.height/2);
-        ctx.restore();
-      } else {
-        const ent={x:p.renderX,y:p.renderY,vx:Math.cos(p.angle||0)*2,vy:Math.sin(p.angle||0)*2,size:s,color:pc,wobble:game.time+dt,finPhase:game.time*6};
-        drawFishBody(ent,{});
-      }
+      drawFishBody(ent,{});
       ctx.save();
       ctx.font='700 11px Space Mono, monospace'; ctx.textAlign='center'; ctx.textBaseline='bottom';
       ctx.lineWidth=4; ctx.strokeStyle='rgba(2,11,20,.9)'; ctx.strokeText(p.name||'Jugador',p.renderX,p.renderY-s-7);
@@ -4829,51 +4709,58 @@ const Multiplayer = (()=>{
   }
 
   function renderArrowLayer(){
-    const layer=document.getElementById('mpArrowLayer');
-    if(!layer) return;
-    if(!state.connected){ layer.replaceChildren(); return; }
-    const w=W, h=H, z=getViewZoom();
-    const isMobile = w <= 700 || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
-    const margin = isMobile ? 42 : 36;
-    // El origen debe ser TU pez en coordenadas de pantalla, no el centro
-    // matemático de la ventana. Esto importa cuando la cámara está pegada
-    // a los bordes del mapa.
-    const selfX = game.player ? (game.player.x - camera.x) * z : w/2;
-    const selfY = game.player ? (game.player.y - camera.y) * z : h/2;
-    const cx = Math.max(0, Math.min(w, selfX));
-    const cy = Math.max(0, Math.min(h, selfY));
-    const left=margin, right=w-margin, top=margin, bottom=h-margin;
-    const frag=document.createDocumentFragment();
+    const arrowCanvas=document.getElementById('mpArrowLayer');
+    if(!arrowCanvas) return;
+    const aw=Math.max(1,Math.floor(W*DPR)), ah=Math.max(1,Math.floor(H*DPR));
+    if(arrowCanvas.width!==aw) arrowCanvas.width=aw;
+    if(arrowCanvas.height!==ah) arrowCanvas.height=ah;
+    const ac=arrowCanvas.getContext('2d');
+    ac.setTransform(DPR,0,0,DPR,0,0);
+    ac.clearRect(0,0,W,H);
+    if(!state.connected) return;
+
+    const z=getViewZoom();
+    const isMobile = aw <= 700 || (window.matchMedia && window.matchMedia('(pointer:coarse)').matches);
+    const margin = isMobile ? 26 : 32;
+    const cx=aw/2, cy=ah/2;
+    const left=margin, right=aw-margin, top=margin, bottom=ah-margin;
 
     for(const p of state.players.values()){
       if(!p.alive) continue;
       const sx=(p.renderX-camera.x)*z;
       const sy=(p.renderY-camera.y)*z;
       if(sx>=left && sx<=right && sy>=top && sy<=bottom) continue;
-      // La dirección debe salir del espacio mundial, no de las posiciones
-      // proyectadas por la cámara. Esto evita errores cuando la cámara está
-      // bloqueada contra una pared/borde del mapa.
-      const dxWorld=(p.renderX - (game.player?.x ?? p.renderX));
-      const dyWorld=(p.renderY - (game.player?.y ?? p.renderY));
-      const lenWorld=Math.hypot(dxWorld,dyWorld)||1;
-      const ux=dxWorld/lenWorld, uy=dyWorld/lenWorld;
-      let tx=Infinity, ty=Infinity;
-      if(ux>0) tx=(right-cx)/ux; else if(ux<0) tx=(left-cx)/ux;
-      if(uy>0) ty=(bottom-cy)/uy; else if(uy<0) ty=(top-cy)/uy;
-      const t=Math.min(tx>0?tx:Infinity, ty>0?ty:Infinity);
+
+      const dx=sx-cx, dy=sy-cy;
+      const len=Math.hypot(dx,dy)||1;
+      const ux=dx/len, uy=dy/len;
+      let tX=Infinity, tY=Infinity;
+      if(ux>0) tX=(right-cx)/ux; else if(ux<0) tX=(left-cx)/ux;
+      if(uy>0) tY=(bottom-cy)/uy; else if(uy<0) tY=(top-cy)/uy;
+      const t=Math.min(tX>0?tX:Infinity,tY>0?tY:Infinity);
       const ax=cx+ux*t, ay=cy+uy*t;
       const isTeam=state.mode==='teams';
       const pc=isTeam ? (p.team==='A' ? '#5ea7ff' : '#ff6a6a') : '#a084ff';
-      const arrow=document.createElement('div');
-      arrow.className='mp-arrow';
-      arrow.style.left=ax+'px'; arrow.style.top=ay+'px';
-      arrow.style.color=pc;
-      arrow.style.transform=`translate(-50%, -50%) rotate(${Math.atan2(dyWorld,dxWorld)}rad)`;
-      const shape=document.createElement('div'); shape.className='mp-arrow-shape';
-      const label=document.createElement('div'); label.className='mp-arrow-label'; label.textContent=p.name||'Jugador';
-      arrow.append(shape,label); frag.appendChild(arrow);
+      const size=isMobile?14:16;
+
+      ac.save();
+      ac.translate(ax,ay);
+      ac.rotate(Math.atan2(dy,dx));
+      ac.globalAlpha=.98;
+      ac.shadowColor=pc; ac.shadowBlur=isMobile?18:14;
+      ac.fillStyle=pc;
+      ac.beginPath();
+      ac.moveTo(size*1.55,0);
+      ac.lineTo(-size*.75,-size*.72);
+      ac.lineTo(-size*.25,0);
+      ac.lineTo(-size*.75,size*.72);
+      ac.closePath();
+      ac.fill();
+      ac.strokeStyle='rgba(2,11,20,.95)';
+      ac.lineWidth=2.5;
+      ac.stroke();
+      ac.restore();
     }
-    layer.replaceChildren(frag);
   }
 
   function onPlayerEaten(msg){
@@ -4916,21 +4803,7 @@ const Multiplayer = (()=>{
     setStatus('SOLO');
   }
 
-  function handleOnlineBossCollision(){if(!game.player)return;const p=game.player;for(const e of game.entities){if(!e.boss)continue;const t=e.bossType==='shrimp'?{x:e.x-Math.cos(e.angle||0)*e.size*1.12,y:e.y-Math.sin(e.angle||0)*e.size*1.12}:{x:e.x-Math.cos(e.angle||0)*e.size*.92,y:e.y-Math.sin(e.angle||0)*e.size*.92};const r=playerHitbox()+e.size*(e.bossType==='shrimp'?.34:.30);if(Math.hypot(p.x-t.x,p.y-t.y)<=r){Multiplayer.biteBoss(e.id);return;}}}
-
-// OPTIMIZACIÓN: renderLeaderboard() reconstruye innerHTML + ordena un array
-// cada vez que se llama. Se invocaba en CADA frame (hasta 60-90 veces/seg),
-// lo cual es trabajo de DOM totalmente innecesario ya que el marcador solo
-// necesita verse actualizado unas pocas veces por segundo. setStatus()
-// sigue llamándola directamente para reflejar cambios de conexión al instante.
-let lastLeaderboardRenderAt = 0;
-function update(now){
-  sendState(now);
-  if(now - lastLeaderboardRenderAt > 200){
-    lastLeaderboardRenderAt = now;
-    renderLeaderboard();
-  }
-}
+  function update(now){ sendState(now); renderLeaderboard(); }
   function open(room){
     document.getElementById('startScreen').classList.add('hidden');
     document.getElementById('shopScreen').classList.add('hidden');
@@ -4945,8 +4818,7 @@ function update(now){
     if(!game.running){ document.getElementById('startScreen').classList.remove('hidden'); }
   }
 
-  function biteBoss(id){if(!state.connected||!state.socket||state.socket.readyState!==WebSocket.OPEN)return;try{state.socket.send(JSON.stringify({type:'boss_bite',bossId:id}));}catch(_){}}
-  return {connect,update,drawRemotePlayers,open,close,disconnect,isConnected:()=>state.connected,room:()=>state.room,setMode:updateModeUI,updateHUD:renderLeaderboard,biteBoss};
+  return {connect,update,drawRemotePlayers,open,close,disconnect,isConnected:()=>state.connected,room:()=>state.room,setMode:updateModeUI,updateHUD:renderLeaderboard};
 })();
 
 
@@ -5122,23 +4994,7 @@ if(window.visualViewport){
 /* =========================================================
    MAIN LOOP
    ========================================================= */
-// OPTIMIZACIÓN MÓVIL (congelamiento): en escritorio el juego sigue sin límite
-// de FPS, igual que siempre. En móvil, limitamos el trabajo real de
-// update()+render() a ~30 FPS. requestAnimationFrame se sigue llamando en
-// cada tick (por eso no se "traba" la animación del navegador), pero los
-// frames de más se descartan ANTES de tocar el canvas o la física, que es
-// donde estaba el costo real. dt sigue calculándose con el tiempo real
-// transcurrido, así que el movimiento no cambia de velocidad.
-const MOBILE_FRAME_INTERVAL_MS = 1000/30;
-let lastMobileFrameT = 0;
 function frame(now){
-  if(IS_MOBILE_DEVICE()){
-    if(now - lastMobileFrameT < MOBILE_FRAME_INTERVAL_MS){
-      requestAnimationFrame(frame);
-      return;
-    }
-    lastMobileFrameT = now;
-  }
   const dt = Math.min((now-lastT)/1000, 0.05);
   lastT = now;
   update(dt);
