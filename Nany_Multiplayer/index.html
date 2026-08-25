@@ -208,7 +208,6 @@
   @media(max-width:600px){.mp-modes{grid-template-columns:1fr;}.mp-mode{padding:10px;}}
 
   /* ---------- overlays ---------- */
-  #multiplayerScreen{z-index:70;}
   .overlay{
     position:absolute;
     inset:0;
@@ -768,21 +767,6 @@
     .icon-btn{ width:26px; height:26px; font-size:12px; }
     #minimap{ width:48px !important; height:48px !important; top:36px !important; }
   }
-
-
-  @media (min-width: 701px){
-    #multiplayerStatus{left:18px;top:118px;max-width:220px;}
-    #mpLeaderboard{right:18px;top:112px;left:auto;bottom:auto;width:235px;}
-  }
-  @media (orientation: landscape) and (pointer: coarse){
-    #multiplayerStatus{left:8px;top:42px;max-width:180px;font-size:9px;}
-    #mpLeaderboard{right:8px;top:106px;left:auto;width:170px;font-size:9px;}
-  }
-
-
-  #multiplayerBtn{transition:transform .12s ease,border-color .12s ease,box-shadow .12s ease;}
-  #multiplayerBtn:hover{transform:translateY(-1px);border-color:var(--bio-cyan);box-shadow:0 8px 22px rgba(77,255,240,.16);}
-  #multiplayerBtn:active{transform:scale(.97);}
 
 </style>
 </head>
@@ -4742,7 +4726,7 @@ const Multiplayer = (()=>{
   function update(now){ sendState(now); renderLeaderboard(); }
   function open(room){
     document.getElementById('multiplayerScreen').classList.remove('hidden');
-    const input=document.getElementById('mpRoomInput'); if(input){ input.value=normalizeRoom(room||state.room||'ABISMO01'); setTimeout(()=>input.focus(),50); }
+    const input=document.getElementById('mpRoomInput'); if(input) input.value=normalizeRoom(room||state.room||'ABISMO01');
     updateModeUI(state.mode||'teams');
     if(state.connected) setStatus(`${modeLabel(state.mode)}${state.mode==='teams'&&state.teamName?' · '+state.teamName:''} · ${populationText(state.players.size+1)}`,true); else setStatus('Desconectado');
   }
@@ -4776,7 +4760,6 @@ document.getElementById('mpLeaveBtn').onclick = ()=>{ Multiplayer.disconnect(); 
 document.getElementById('goMultiplayerBtn').onclick = ()=>{ document.getElementById('gameOverScreen').classList.add('hidden'); Multiplayer.open(); };
 document.querySelectorAll('.mp-mode').forEach(btn=>btn.addEventListener('click',()=>{ Multiplayer.setMode(btn.dataset.mode); }));
 document.querySelectorAll('.mp-team-btn').forEach(btn=>btn.addEventListener('click',()=>{ document.querySelectorAll('.mp-team-btn').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); }));
-document.getElementById('mpRoomInput').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); document.getElementById('mpJoinBtn').click(); } });
 document.getElementById('mpJoinBtn').onclick = ()=>{
   const room=document.getElementById('mpRoomInput').value;
   Multiplayer.connect(room);
