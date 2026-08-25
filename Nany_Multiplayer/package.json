@@ -1,7 +1,6 @@
 {
-  "name": "nany-hambrienta-multiplayer",
+  "name": "nany-hambrienta-deterministic",
   "version": "1.0.0",
-  "private": true,
   "type": "module",
   "scripts": {
     "start": "node server.mjs"
@@ -10,6 +9,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "ws": "^8.21.3"
+    "ws": "^8.18.0"
   }
 }
