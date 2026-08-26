@@ -15,16 +15,6 @@ function replaceSection(source,startMarker,endMarker,replacement,label){
 
 /* -------------------------------------------------------------------------
    VIDAS EXTRA = CONTINUIDAD, NO RESPAWN
-   -------------------------------------------------------------------------
-   Si después del golpe quedan vidas:
-   - no ponemos alive=false;
-   - no movemos al jugador;
-   - no reiniciamos masa, score ni velocidad;
-   - no mostramos animación de muerte;
-   - solo restamos una vida y damos 1.5 s de invulnerabilidad.
-
-   Solamente al llegar a 0 se ejecuta la muerte real y el cliente vuelve al
-   lobby multiplayer mediante el flujo final existente.
    ------------------------------------------------------------------------- */
 let runtimeSource=await fs.readFile(RUNTIME,'utf8');
 
@@ -41,7 +31,6 @@ const continuousLives=`function killPlayer(w,p,reason,eater=null,killerFish=null
   p.lastDeathBossType=killerFish?.boss?killerFish.bossType:null;
   p.lastDeathAt=now;
 
-  // Vida extra consumida: seguimos exactamente en la misma partida.
   if(!finalDeath){
     p.alive=true;
     p.invulnerableUntil=now+1500;
@@ -52,7 +41,6 @@ const continuousLives=`function killPlayer(w,p,reason,eater=null,killerFish=null
     return true;
   }
 
-  // Cero vidas: esta sí es la muerte definitiva.
   p.alive=false;
   p.vx=0;
   p.vy=0;
@@ -72,13 +60,16 @@ runtimeSource=replaceSection(
 );
 
 /* -------------------------------------------------------------------------
-   CRECIMIENTO 25% MÁS RÁPIDO
+   CURVA DE CRECIMIENTO MÁS RÁPIDA Y DIVERTIDA
    -------------------------------------------------------------------------
-   El score/leaderboard conserva los puntos originales. Solo growthScore gana
-   25% extra para que el tamaño físico avance un poco más rápido.
+   Score/leaderboard conserva los puntos originales. Solo growthScore recibe:
+   - x2.00 mientras eres pequeño (<1000)
+   - x1.75 en crecimiento medio (<3000)
+   - x1.50 después
+   Esto acelera la cadena alimenticia al principio sin volver trivial el late game.
    ------------------------------------------------------------------------- */
 const oldGrowth='p.score+=f.points;p.growthScore+=f.points;';
-const newGrowth='p.score+=f.points;p.growthScore+=Math.max(1,Math.round(f.points*1.25));';
+const newGrowth="p.score+=f.points;{const gm=p.growthScore<1000?2.00:p.growthScore<3000?1.75:1.50;p.growthScore+=Math.max(1,Math.round(f.points*gm));}";
 if(!runtimeSource.includes(oldGrowth))throw new Error('Gameplay entry: no se encontró crecimiento base de removeFish');
 runtimeSource=runtimeSource.replace(oldGrowth,newGrowth);
 
@@ -108,8 +99,6 @@ if(!deathSource.includes(oldFinalHandler))throw new Error('Gameplay entry: no se
 deathSource=deathSource.replace(oldFinalHandler,newLifeHandlers);
 await fs.writeFile(DEATH_FLOW,deathSource,'utf8');
 
-console.log('NANY GAMEPLAY PATCH OK: continuous extra lives + 1.25x growth');
+console.log('NANY GAMEPLAY PATCH OK: continuous extra lives + fast growth curve 2x/1.75x/1.5x');
 
-// Density primero; esa capa conserva este runtime ya modificado y después
-// arranca collision-entry.
 await import(pathToFileURL(path.join(ROOT,'server-density-entry.mjs')).href+`?gameplay=${Date.now()}`);
