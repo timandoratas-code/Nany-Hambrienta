@@ -8,16 +8,32 @@ const runtimePath = path.join(root, '.server-stable-runtime.mjs');
 
 let source = await fs.readFile(sourcePath, 'utf8');
 
-const duplicateJoinNeedle = "if(m.type==='join'){const s=modeToWorld(m.mode);";
-const duplicateJoinReplacement = "if(m.type==='join'){if(p){send(ws,welcome(w,p));return}const s=modeToWorld(m.mode);";
-if (source.includes(duplicateJoinNeedle)) {
-  source = source.replace(duplicateJoinNeedle, duplicateJoinReplacement);
+// Give every browser a persistent identity before any WebSocket is opened.
+const helper = `\nconst parseNanyCookie=(req,name)=>{const m=String(req.headers.cookie||'').match(new RegExp('(?:^|;\\\\s*)'+name+'=([^;]+)'));return m?decodeURIComponent(m[1]):null};\nconst ensureNanyCookie=(req,res)=>{const old=parseNanyCookie(req,'nanyClient');if(old)return old;const id='nany-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2)+'-'+Math.random().toString(36).slice(2);res.setHeader('Set-Cookie',\`nanyClient=\${encodeURIComponent(id)}; Path=/; Max-Age=31536000; SameSite=Lax\`);return id};\n`;
+if (!source.includes('const parseNanyCookie=')) {
+  const marker = "const safeName=v=>String(v||'Nany').trim().slice(0,18)||'Nany';";
+  source = source.replace(marker, marker + helper);
 }
 
-const connectedResumeNeedle = "if(old&&old.disconnectedAt&&Date.now()-old.disconnectedAt<RESUME_MS&&!old.connected){p=old;p.ws=ws;p.connected=true;p.disconnectedAt=0;send(ws,welcome(w,p));broadcast(w);return}";
-const connectedResumeReplacement = "if(old&&old.connected&&old.ws&&old.ws!==ws){try{old.ws.close(4001,'replaced-by-resume')}catch{}p=old;p.ws=ws;p.connected=true;p.disconnectedAt=0;send(ws,welcome(w,p));broadcast(w);return}if(old&&old.disconnectedAt&&Date.now()-old.disconnectedAt<RESUME_MS&&!old.connected){p=old;p.ws=ws;p.connected=true;p.disconnectedAt=0;send(ws,welcome(w,p));broadcast(w);return}";
-if (source.includes(connectedResumeNeedle)) {
-  source = source.replace(connectedResumeNeedle, connectedResumeReplacement);
+// Set the identity cookie on the game page before its JavaScript opens sockets.
+const pageNeedle = "if(u.pathname==='/'||u.pathname==='/index.html'){const html=await fs.readFile(path.join(ROOT,'index.html'),'utf8');res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html.replace('</head>',bridge+'</head>'));}";
+const pageReplacement = "if(u.pathname==='/'||u.pathname==='/index.html'){ensureNanyCookie(req,res);const html=await fs.readFile(path.join(ROOT,'index.html'),'utf8');res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html.replace('</head>',bridge+'</head>'));}";
+if (source.includes(pageNeedle)) source = source.replace(pageNeedle, pageReplacement);
+
+// Replace the entire join handler with an idempotent, device-bound session.
+const joinStart = source.indexOf("if(m.type==='join'){", source.indexOf("wss.on('connection'"));
+const stateStart = source.indexOf("if(m.type==='state'&&player)", joinStart);
+if (joinStart >= 0 && stateStart > joinStart) {
+  const joinBlock = `if(m.type==='join'){if(player){const ww=worlds.get(player.worldCode);if(ww)send(ws,welcome(ww,player));return}const [code,mode]=modeWorld(m.mode);const w=worlds.get(code);const clientKey=parseNanyCookie(req,'nanyClient')||String(m.clientKey||'');const resumeId=clientKey||String(m.resumeId||'');let p=resumeId?[...w.players.values()].find(x=>x.resumeId===resumeId||x.clientKey===resumeId):null;if(p&&p.connected&&p.ws&&p.ws!==ws){try{p.ws.close(4001,'replaced-by-device-session')}catch{}}if(!p){const active=[...w.players.values()].filter(x=>x.connected).length;if(active>=MAX_PLAYERS)return send(ws,{type:'error',message:'Servidor lleno'});const pos=spawn(w);p={id:Math.random().toString(36).slice(2)+Date.now().toString(36),resumeId:resumeId||('nany-'+Math.random().toString(36).slice(2)),clientKey:clientKey||null,ws:null,worldCode:code,connected:false,disconnectedAt:0,name:safeName(m.name),team:teamFor(w,m.team),x:pos.x,y:pos.y,tx:pos.x,ty:pos.y,lastX:pos.x,lastY:pos.y,vx:0,vy:0,angle:0,score:0,radius:11,level:1,lives:1,alive:true,sprinting:false,lastInputAt:Date.now(),invulnerableUntil:Date.now()+1200};w.players.set(p.id,p)}p.ws=ws;p.connected=true;p.disconnectedAt=0;p.worldCode=code;p.name=safeName(m.name||p.name);if(!p.team)p.team=teamFor(w,m.team);player=p;send(ws,welcome(w,p));broadcast(w);return}`;
+  source = source.slice(0, joinStart) + joinBlock + source.slice(stateStart);
+}
+
+// Replace close handling so the room is read from the player's stored worldCode.
+const closeStart = source.indexOf("ws.on('close',()=>{", stateStart);
+const closeEnd = source.indexOf("});\nconst hb=", closeStart);
+if (closeStart >= 0 && closeEnd > closeStart) {
+  const closeBlock = "ws.on('close',()=>{if(!player)return;const ww=worlds.get(player.worldCode);player.connected=false;player.ws=null;player.disconnectedAt=Date.now();if(ww)broadcast(ww)})";
+  source = source.slice(0, closeStart) + closeBlock + source.slice(closeEnd + 3);
 }
 
 await fs.writeFile(runtimePath, source, 'utf8');
