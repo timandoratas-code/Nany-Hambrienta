@@ -1,9 +1,9 @@
 {
   "name": "nany-hambrienta-multiplayer",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "type": "module",
   "scripts": {
-    "start": "node server-live-authoritative-v2.mjs"
+    "start": "node server.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"
