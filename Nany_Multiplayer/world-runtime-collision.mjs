@@ -6,10 +6,13 @@ const {
   updateFish,updateBoss,applyInput,tryBossHit,devSetMass,devSetStage,safeName,makeId,makeDeviceId
 }=Core;
 
-// The fish artwork reaches roughly 1.05 * size at the front of the body.
-// Keep the original 0.78 / 0.88 hitboxes for FOOD/THREAT eligibility, and
-// use this larger radius only to decide when two visible bodies have touched.
+// La silueta visible del pez llega aproximadamente a 1.05 * size.
+// Las reglas 0.78 / 0.88 siguen decidiendo QUIÉN puede comer a quién.
+// Para comer presas usamos una zona frontal de mordida alineada con p.angle;
+// para depredadores mantenemos contacto de cuerpo completo.
 const CONTACT_SCALE=1.05;
+const MOUTH_OFFSET_SCALE=0.80;
+const MOUTH_REACH_SCALE=0.28;
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 
@@ -33,6 +36,16 @@ const isPredator=f=>f?.role==='predator'||f?.role==='hunter';
 const canPlayerEat=(p,f)=>!!f?.gemFish||(!f?.immortal&&f?.role==='prey'&&ruleFishHB(f)<rulePlayerHB(p)*0.96);
 const canFishEat=(p,f)=>isPredator(f)&&ruleFishHB(f)>=rulePlayerHB(p)*1.04;
 
+function mouthContact(p,f){
+  if(!p||!f)return false;
+  const pr=radius(p.growthScore);
+  const a=Number(p.angle)||0;
+  const mx=p.x+Math.cos(a)*pr*MOUTH_OFFSET_SCALE;
+  const my=p.y+Math.sin(a)*pr*MOUTH_OFFSET_SCALE;
+  const biteReach=Math.max(3,pr*MOUTH_REACH_SCALE);
+  return Math.hypot(f.x-mx,f.y-my)<=biteReach+contactFishHB(f);
+}
+
 function moveEntityToRuleContact(e,p,reach){
   const ox=e.x,oy=e.y;
   const dx=ox-p.x,dy=oy-p.y,d=Math.hypot(dx,dy);
@@ -43,16 +56,19 @@ function moveEntityToRuleContact(e,p,reach){
   return {x:ox,y:oy};
 }
 
-// Preserve every original consume rule. We only bridge the narrow visual gap
-// between the old inner circle and the actual rendered body.
+// El servidor valida la misma mordida frontal que el cliente. Si la boca
+// visible toca una presa pero los antiguos círculos internos aún no se cruzan,
+// proyectamos temporalmente la presa al alcance antiguo solo para reutilizar
+// las reglas originales de puntuación/respawn de Core.tryConsume.
 function tryConsume(w,p,id){
   const f=w?.fish?.get?.(String(id||''));
   if(!f||!p?.connected||!p?.alive)return Core.tryConsume(w,p,id);
+  if(!canPlayerEat(p,f))return Core.tryConsume(w,p,id);
+  if(!mouthContact(p,f))return false;
 
   const oldReach=rulePlayerHB(p)+ruleFishHB(f);
-  const visualReach=contactPlayerHB(p)+contactFishHB(f);
   const d=dist(p,f);
-  if(d<=oldReach||d>visualReach)return Core.tryConsume(w,p,id);
+  if(d<=oldReach)return Core.tryConsume(w,p,id);
 
   const old=moveEntityToRuleContact(f,p,oldReach);
   const ok=Core.tryConsume(w,p,id);
@@ -66,9 +82,7 @@ function chooseContactPlayer(players,f){
     if(!p?.connected||!p?.alive)continue;
     const now=Date.now();
     if(Number(p.invulnerableUntil||0)>now||now-Number(p.lastInputAt||0)>450)continue;
-
-    const affectsCollision=canPlayerEat(p,f)||canFishEat(p,f);
-    if(!affectsCollision)continue;
+    if(!canFishEat(p,f))continue;
 
     const oldReach=rulePlayerHB(p)+ruleFishHB(f);
     const visualReach=contactPlayerHB(p)+contactFishHB(f);
@@ -80,15 +94,33 @@ function chooseContactPlayer(players,f){
   return best;
 }
 
-// Run the original authoritative combat untouched. Before it runs, entities
-// that are visibly touching are projected only for the collision calculation;
-// surviving entities are immediately restored to their real server positions.
+// 1) Resolvemos comer presas únicamente desde la boca.
+// 2) Ocultamos temporalmente las presas restantes para impedir que el combat
+//    original las coma con el viejo círculo centrado (incluida la cola).
+// 3) Conservamos el puente de contacto corporal para depredadores y lava.
 function combat(w){
   if(!w?.players)return Core.combat(w);
   const players=[...w.players.values()];
-  const saved=[];
+  const now=Date.now();
 
+  for(const p of players){
+    if(!p?.connected||!p?.alive)continue;
+    if(Number(p.invulnerableUntil||0)>now||now-Number(p.lastInputAt||0)>450)continue;
+    for(const f of [...(w.fish?.values?.()||[])]){
+      if(!w.fish?.has?.(f.id))continue;
+      if(canPlayerEat(p,f)&&mouthContact(p,f))tryConsume(w,p,f.id);
+    }
+  }
+
+  const saved=[];
   for(const f of w.fish?.values?.()||[]){
+    if(f?.gemFish||f?.role==='prey'){
+      saved.push({kind:'prey',e:f,x:f.x,y:f.y});
+      f.x=-1000000;
+      f.y=-1000000;
+      continue;
+    }
+
     const hit=chooseContactPlayer(players,f);
     if(!hit)continue;
     const old=moveEntityToRuleContact(f,hit.p,hit.oldReach);
@@ -100,8 +132,8 @@ function combat(w){
     let best=null,bestRatio=Infinity;
     for(const p of players){
       if(!p?.connected||!p?.alive)continue;
-      const now=Date.now();
-      if(Number(p.invulnerableUntil||0)>now||now-Number(p.lastInputAt||0)>450)continue;
+      const tickNow=Date.now();
+      if(Number(p.invulnerableUntil||0)>tickNow||tickNow-Number(p.lastInputAt||0)>450)continue;
       const oldReach=rulePlayerHB(p)+ruleFishHB(h);
       const visualReach=contactPlayerHB(p)+contactFishHB(h);
       const d=dist(p,h);
@@ -119,7 +151,7 @@ function combat(w){
     return Core.combat(w);
   }finally{
     for(const s of saved){
-      if(s.kind==='fish'){
+      if(s.kind==='prey'||s.kind==='fish'){
         if(w.fish?.get?.(s.e.id)===s.e){s.e.x=s.x;s.e.y=s.y;}
       }else if(s.kind==='lava'&&w.lavaHazard===s.e){
         s.e.x=s.x;s.e.y=s.y;
