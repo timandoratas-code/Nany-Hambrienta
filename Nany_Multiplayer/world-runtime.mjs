@@ -49,8 +49,11 @@ const FISH={
   monster:{key:'monster',role:'predator',points:300,color:'#8d2638',size:44,speed:4.55}
 };
 const LEVEL_POOLS={
-  1:[['plankton',88],['minnow',54],['green',30],['piranha',32],['stick',24],['rival',18],['shark',10],['monster',4]],
-  2:[['plankton',68],['minnow',50],['green',28],['silver',12],['piranha',28],['stick',20],['rival',18],['lantern',18],['shark',10],['monster',8]],
+  // Nivel 1 de entrada: 75% presas / 25% depredadores. Sin pez linterna.
+  1:[['plankton',100],['minnow',60],['green',35],['piranha',24],['stick',16],['rival',12],['shark',9],['monster',4]],
+  // Nivel 2 conserva aproximadamente la dificultad que antes tenía el Nivel 1,
+  // pero mantiene la progresión de especies y permite el pez linterna rojo.
+  2:[['plankton',80],['minnow',50],['green',28],['silver',14],['piranha',27],['stick',20],['rival',16],['lantern',10],['shark',11],['monster',4]],
   3:[['plankton',58],['minnow',44],['green',30],['silver',14],['piranha',28],['stick',20],['rival',20],['lantern',24],['shark',12],['monster',10]],
   4:[['plankton',50],['minnow',40],['green',30],['silver',16],['piranha',28],['stick',20],['rival',20],['lantern',28],['shark',16],['monster',12]]
 };
@@ -76,7 +79,23 @@ function pubBoss(b){if(!b)return null;const now=Date.now(),active=!!b.chaseId&&b
 function snapshot(w){const entities=[...w.fish.values()].map(pubFish);if(w.lavaHazard)entities.push(pubFish(w.lavaHazard));return{type:'snapshot',room:w.code,mode:w.mode,population:[...w.players.values()].filter(p=>p.connected).length,serverTick:w.tick,serverTime:Date.now(),worldSeed:w.seed,worldEpoch:w.epoch,worldStage:w.stage,bossCleared:w.bossCleared,boss:pubBoss(w.boss),gemFishActive:activeGemCount(w),gemFishCap:GEM_FISH_CAP,nextGemAt:w.nextGemAt,players:[...w.players.values()].filter(p=>p.connected).map(pubPlayer),entities};}
 function broadcast(w){const base=snapshot(w);for(const p of w.players.values())if(p.connected)send(p.ws,{...base,you:pubPlayer(p),player:pubPlayer(p)});}
 function broadcastStage(w){sendAll(w,{type:'world_stage',stage:w.stage,bossCleared:w.bossCleared,serverTime:Date.now(),worldSeed:w.seed,worldEpoch:w.epoch,boss:pubBoss(w.boss)});broadcast(w);}
-function maybeStartBoss(w){if(w.boss||w.bossCleared)return;const maxScore=Math.max(0,...[...w.players.values()].map(p=>p.score||0));if(w.stage===0&&maxScore>=1000){w.stage=1;startBoss(w,'shrimp');broadcastStage(w);}else if(w.stage===2&&maxScore>=3000){w.stage=3;startBoss(w,'lava');broadcastStage(w);}else if(w.stage===4&&maxScore>=6000){w.stage=5;startBoss(w,'jelly');broadcastStage(w);}}
+function maybeStartBoss(w){
+  if(w.boss||w.bossCleared)return;
+  const connected=[...w.players.values()].filter(p=>p.connected);
+  if(!connected.length)return;
+
+  if(w.stage===0){
+    // El Camarón solo aparece cuando TODOS los jugadores conectados siguen vivos
+    // y cada uno alcanzó al menos 1000 puntos.
+    const everyoneReady=connected.every(p=>p.alive&&Number(p.score||0)>=1000);
+    if(everyoneReady){w.stage=1;startBoss(w,'shrimp');broadcastStage(w);}
+    return;
+  }
+
+  const maxScore=Math.max(0,...connected.map(p=>p.score||0));
+  if(w.stage===2&&maxScore>=3000){w.stage=3;startBoss(w,'lava');broadcastStage(w);}
+  else if(w.stage===4&&maxScore>=6000){w.stage=5;startBoss(w,'jelly');broadcastStage(w);}
+}
 function canPlayerEat(p,f){return !!f.gemFish||(!f.immortal&&f.role==='prey'&&fishHB(f)<playerHB(p.growthScore)*0.96);}
 function canFishEatPlayer(p,f){return isPredator(f)&&fishHB(f)>=playerHB(p.growthScore)*1.04;}
 function disengageFish(w,f,now){const old=f.chaseId?w.players.get(f.chaseId):null;f.chaseId=null;f.chaseUntil=0;f.chaseStartedAt=0;f.role='predator';f.speed=f.baseSpeed||f.speed;f.cooldownUntil=now+(f.hazard==='lava'?4200:2800);if(old){const away=Math.atan2(f.y-old.y,f.x-old.x)+(Math.random()-.5)*.35;f.heading=away;const s=f.speed*.82;f.vx=Math.cos(away)*s;f.vy=Math.sin(away)*s;}f.turn=.35+Math.random()*.55;}
@@ -97,9 +116,11 @@ function killPlayer(w,p,reason,eater=null,killerFish=null){
   const now=Date.now(),remaining=Math.max(0,(Number(p.lives)||1)-1),finalDeath=remaining<=0;
   p.alive=false;p.lives=remaining;p.vx=0;p.vy=0;p.lastDeathReason=reason;p.lastDeathBossType=killerFish?.boss?killerFish.bossType:null;p.lastDeathAt=now;
   const victim=pubPlayer(p),eaterPub=eater?pubPlayer(eater):null,killerFishPub=killerFish?(killerFish.boss?pubBoss(killerFish):pubFish(killerFish)):null;
-  const deathEvent={type:'player_death',victimId:p.id,victim,reason,eaterId:eater?.id||null,eater:eaterPub,killerFish:killerFishPub,finalDeath,lives:remaining,maxLives:p.maxLives||1,worldStage:w.stage,bossCleared:w.bossCleared,boss:pubBoss(w.boss),serverTime:now};
-  sendAllExcept(w,p.id,deathEvent);
-  if(eater){sendAllExcept(w,p.id,{type:'player_eaten',victimId:p.id,victim,eaterId:eater.id,eater:eaterPub,reason,finalDeath,serverTime:now});}
+
+  // La víctima recibe el único evento que puede activar su muerte local.
+  // Los demás reciben un evento exclusivamente visual, imposible de confundir
+  // con una muerte propia por los clientes legacy.
+  sendAllExcept(w,p.id,{type:'remote_player_death',victimId:p.id,victim,reason,eaterId:eater?.id||null,eater:eaterPub,killerFish:killerFishPub,finalDeath,lives:remaining,maxLives:p.maxLives||1,worldStage:w.stage,bossCleared:w.bossCleared,boss:pubBoss(w.boss),serverTime:now});
   send(p.ws,{type:'player_dead',id:p.id,victim,reason,finalDeath,lives:remaining,maxLives:p.maxLives||1,killerFish:killerFishPub,eater:eaterPub,worldStage:w.stage,bossCleared:w.bossCleared,boss:pubBoss(w.boss),serverTime:now});
   broadcast(w);
   if(finalDeath)return true;
