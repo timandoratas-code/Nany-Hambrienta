@@ -1,9 +1,6 @@
 import http from 'node:http';
 import { WebSocket } from 'ws';
 
-// Patch the WebSocket transport before the authoritative server is imported.
-// Every server snapshot/welcome gets one shared server timestamp/tick so all
-// clients can render the same simulation instant instead of "latest packet wins".
 const nativeSend = WebSocket.prototype.send;
 WebSocket.prototype.send = function patchedSend(data, ...args) {
   try {
@@ -12,7 +9,7 @@ WebSocket.prototype.send = function patchedSend(data, ...args) {
       if (msg && (msg.type === 'snapshot' || msg.type === 'welcome')) {
         const now = Date.now();
         msg.serverTime = now;
-        msg.serverTick = Math.floor(now / 50); // 20 Hz shared presentation clock
+        msg.serverTick = Number.isFinite(Number(msg.worldTick)) ? Number(msg.worldTick) : Math.floor(now / 50);
         data = JSON.stringify(msg);
       }
     }
@@ -20,10 +17,7 @@ WebSocket.prototype.send = function patchedSend(data, ...args) {
   return nativeSend.call(this, data, ...args);
 };
 
-// The authoritative server owns the room/fish simulation. We only inject the
-// synchronization bridge before the page's own scripts execute.
 const originalCreateServer = http.createServer;
-
 http.createServer = function patchedCreateServer(handler) {
   return originalCreateServer.call(http, (req, res) => {
     const originalEnd = res.end;
@@ -67,20 +61,17 @@ http.createServer = function patchedCreateServer(handler) {
       if(!g||!g.running||!b.length)return;
       const clock=window[CLOCK]||{offset:0};
       const targetServerTime=Date.now()-clock.offset-75;
-
-      // Find the two snapshots surrounding the same server presentation time.
       let a=null,z=null;
       for(let i=0;i<b.length;i++){
         const item=b[i];
         if(item.time<=targetServerTime) a=item;
         if(item.time>=targetServerTime){z=item;break;}
       }
-      if(!a) a=b[0];
-      if(!z) z=b[b.length-1];
-
-      const ta=a.time, tz=z.time;
-      const alpha=(z!==a && tz>ta)?Math.max(0,Math.min(1,(targetServerTime-ta)/(tz-ta))):1;
-      const A=a.msg, Z=z.msg;
+      if(!a)a=b[0];
+      if(!z)z=b[b.length-1];
+      const ta=a.time,tz=z.time;
+      const alpha=(z!==a&&tz>ta)?Math.max(0,Math.min(1,(targetServerTime-ta)/(tz-ta))):1;
+      const A=a.msg,Z=z.msg;
       const mapA=new Map((A.entities||[]).map(f=>[f.id,f]));
       const mapZ=new Map((Z.entities||[]).map(f=>[f.id,f]));
       const ids=new Set([...mapA.keys(),...mapZ.keys()]);
@@ -93,18 +84,8 @@ http.createServer = function patchedCreateServer(handler) {
         const vx=f1.vx,vy=f1.vy;
         g.entities.push({serverId:id,type:f1.type,power:f1.power,points:f1.points,size:f1.size,color:f1.color,behavior:f1.role==='predator'?'aggro':'flee',hazard:null,speed:Math.max(.1,Math.hypot(vx,vy)),x,y,vx,vy,wobble:Math.atan2(vy,vx),life:0});
       }
-
-      // Player state is taken from the snapshot targeted at the same server time.
       const P=A.you||A.player;
-      if(P){
-        g.score=P.score;
-        g.lives=P.lives;
-        g.player.x=P.x;
-        g.player.y=P.y;
-        g.player.vx=P.vx;
-        g.player.vy=P.vy;
-        g.player.angle=P.angle;
-      }
+      if(P){g.score=P.score;g.lives=P.lives;g.player.x=P.x;g.player.y=P.y;g.player.vx=P.vx;g.player.vy=P.vy;g.player.angle=P.angle;}
     }catch(_){}
   };
 })();</script>`;
@@ -117,4 +98,4 @@ http.createServer = function patchedCreateServer(handler) {
   });
 };
 
-await import('./server-single-ws.mjs');
+await import('./server-persistent.mjs');
