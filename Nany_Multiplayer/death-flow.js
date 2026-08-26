@@ -95,8 +95,9 @@
   const hitboxPatch=setInterval(()=>{
     try{
       if(!window.__NANY_HITBOX_ALIGNED__&&getFn('playerHitbox')&&getFn('fishHitbox')){
-        window.__NANY_PLAYER_HITBOX_ALIGNED__=()=>visibleRadius();
-        window.__NANY_FISH_HITBOX_ALIGNED__=e=>Math.max(2.5,Number(e?.size)||0);
+        // Copia literal de index(2).html: jugador 78%, NPC 88%.
+        window.__NANY_PLAYER_HITBOX_ALIGNED__=()=>visibleRadius()*0.78;
+        window.__NANY_FISH_HITBOX_ALIGNED__=e=>Math.max(2.5,(Number(e?.size)||0)*0.88);
         window.eval('playerHitbox=window.__NANY_PLAYER_HITBOX_ALIGNED__');
         window.eval('fishHitbox=window.__NANY_FISH_HITBOX_ALIGNED__');
         window.__NANY_HITBOX_ALIGNED__=true;
