@@ -3,11 +3,16 @@
   const CurrentWS=window.WebSocket;
   if(!CurrentWS||window.__NANY_DEATH_FLOW__)return;
   window.__NANY_DEATH_FLOW__=true;
+  const BUF='__NANY_LIVE_BUF__';
   let selfId=null,deathToken=0;
   const getGame=()=>{try{return window.eval('typeof game!=="undefined"?game:null')}catch{return null}};
   const getSave=()=>{try{return window.eval('typeof Save!=="undefined"?Save:null')}catch{return null}};
   const getFn=name=>{try{return window.eval(`typeof ${name}==="function"?${name}:null`)}catch{return null}};
   const maxLives=()=>Math.max(1,Math.min(4,1+Math.floor(Number(getSave()?.extraLives)||0)));
+  const authoritativeAlive=()=>{
+    const b=window[BUF]||[],m=b.length?b[b.length-1]?.m:null,me=m?.you||m?.player;
+    return !me||me.alive!==false;
+  };
 
   function DeathFlowWS(url,protocols){
     const ws=protocols===undefined?new CurrentWS(url):new CurrentWS(url,protocols);
@@ -30,10 +35,10 @@
       if(m.type==='player_death'){
         const victimId=String(m.victimId||m.victim?.id||'');
         if(selfId&&victimId&&victimId!==selfId){
-          // Si una capa anterior confundió una muerte ajena con la nuestra,
-          // restauramos inmediatamente el estado local.
+          // Una muerte ajena nunca puede dejar a este cliente en estado de muerte.
+          // Solo limpiamos el falso positivo si el estado autoritativo dice que seguimos vivos.
           const g=getGame();
-          if(g?.player?._takingDamage){
+          if(authoritativeAlive()&&g?.player?._takingDamage){
             g.player._takingDamage=false;
             g.deathAnim=null;
           }
