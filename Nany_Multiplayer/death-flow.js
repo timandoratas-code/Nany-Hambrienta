@@ -5,8 +5,9 @@
   window.__NANY_DEATH_FLOW__=true;
   const BUF='__NANY_LIVE_BUF__';
   let selfId=null,deathToken=0,runCoins=0,runGems=0,lastPayoutKey='';
-  let pendingRespawn=null,lastDeathRewards={coins:0,gems:0};
+  let pendingRespawn=null,lastDeathRewards={coins:0,gems:0},forceLobbyUntil=0;
 
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const getGame=()=>{try{return window.eval('typeof game!=="undefined"?game:null')}catch{return null}};
   const getSave=()=>{try{return window.eval('typeof Save!=="undefined"?Save:null')}catch{return null}};
   const getFn=name=>{try{return window.eval(`typeof ${name}==="function"?${name}:null`)}catch{return null}};
@@ -14,6 +15,8 @@
   const maxLives=()=>Math.max(1,Math.min(4,1+Math.floor(Number(getSave()?.extraLives)||0)));
   const authoritativeAlive=()=>{const b=window[BUF]||[],m=b.length?b[b.length-1]?.m:null,me=m?.you||m?.player;return !me||me.alive!==false;};
   const coinValue=e=>{if(!e||e.gemFish)return 0;const pts=Math.max(0,Number(e.points)||0);if(pts<=8)return 1;if(pts<=35)return 2;if(pts<=75)return 3;if(pts<=150)return 4;return 5;};
+  const visibleRadius=()=>{try{return Math.max(3,Number(window.eval('playerRadius(growthScore())'))||11)}catch{const g=getGame();return Math.max(3,11+Math.min(165,Math.max(0,Number(g?.growthScore)||0)*.01))}};
+  const sizeSpeedFactor=size=>clamp(1.08-Math.log2(Math.max(4,Number(size)||4)/4)*0.07,0.70,1.08);
 
   function settleRewards(m){
     const key=String(m?.serverTime||'')+':'+String(m?.id||m?.victim?.id||selfId||'');
@@ -36,11 +39,13 @@
   function ensureRewardBox(){
     const screen=document.getElementById('multiplayerScreen');
     if(!screen)return null;
+    const panel=screen.querySelector('.panel')||screen;
     let box=document.getElementById('mpLastRewards');
     if(!box){
       box=document.createElement('div');box.id='mpLastRewards';
-      box.style.cssText='margin:12px auto 18px;max-width:520px;padding:12px 16px;border-radius:14px;background:rgba(6,24,35,.88);border:1px solid rgba(77,255,240,.35);color:#eaffff;text-align:center;font-weight:800;letter-spacing:.2px;box-shadow:0 10px 30px rgba(0,0,0,.22)';
-      const first=screen.firstElementChild;if(first)first.insertAdjacentElement('afterend',box);else screen.appendChild(box);
+      box.style.cssText='margin:12px 0 16px;padding:12px 16px;border-radius:14px;background:rgba(6,24,35,.88);border:1px solid rgba(77,255,240,.35);color:#eaffff;text-align:center;font-weight:800;letter-spacing:.2px;box-shadow:0 10px 30px rgba(0,0,0,.22)';
+      const anchor=panel.querySelector('.sub')||panel.querySelector('h1');
+      if(anchor)anchor.insertAdjacentElement('afterend',box);else panel.prepend(box);
     }
     return box;
   }
@@ -50,15 +55,25 @@
     box.textContent=`Partida anterior · +${c} moneda${c===1?'':'s'} · +${g} gema${g===1?'':'s'}`;
     box.style.display='block';
   }
-  function openMultiplayerLobby(rewards){
-    const g=getGame();if(g){g.running=false;g.paused=false;g.deathAnim=null;if(g.player)g.player._takingDamage=false;}
-    const mp=getMultiplayer();try{mp?.disconnect?.()}catch{}
+  function forceMultiplayerScreen(rewards){
+    const g=getGame();
+    if(g){g.running=false;g.paused=false;g.deathAnim=null;if(g.player)g.player._takingDamage=false;}
     document.getElementById('startScreen')?.classList.add('hidden');
     document.getElementById('shopScreen')?.classList.add('hidden');
     document.getElementById('gameOverScreen')?.classList.add('hidden');
     const ms=document.getElementById('multiplayerScreen');if(ms)ms.classList.remove('hidden');
-    try{mp?.open?.()}catch{}
+    try{getMultiplayer()?.open?.()}catch{}
     showRewards(rewards||lastDeathRewards);
+  }
+  function openMultiplayerLobby(rewards){
+    lastDeathRewards=rewards||lastDeathRewards;
+    forceLobbyUntil=Date.now()+5000;
+    window.__NANY_FORCE_MP_LOBBY_UNTIL__=forceLobbyUntil;
+    try{getMultiplayer()?.disconnect?.()}catch{}
+    forceMultiplayerScreen(lastDeathRewards);
+    for(const delay of [0,80,220,600,1200,2200])setTimeout(()=>{
+      if(Date.now()<forceLobbyUntil)forceMultiplayerScreen(lastDeathRewards);
+    },delay);
   }
   function applyRespawn(m){
     const p=m?.player||m,g=getGame();if(!p||!g?.player)return;
@@ -76,13 +91,66 @@
     getFn('spawnFloater')?.(x,y-30,`${name} fue comido`,'#ff7d6b');
   }
 
+  // Mismo tamaño visual = misma hitbox en cliente. El servidor usa la misma regla.
+  const hitboxPatch=setInterval(()=>{
+    try{
+      if(!window.__NANY_HITBOX_ALIGNED__&&getFn('playerHitbox')&&getFn('fishHitbox')){
+        window.__NANY_PLAYER_HITBOX_ALIGNED__=()=>visibleRadius();
+        window.__NANY_FISH_HITBOX_ALIGNED__=e=>Math.max(2.5,Number(e?.size)||0);
+        window.eval('playerHitbox=window.__NANY_PLAYER_HITBOX_ALIGNED__');
+        window.eval('fishHitbox=window.__NANY_FISH_HITBOX_ALIGNED__');
+        window.__NANY_HITBOX_ALIGNED__=true;
+      }
+      if(window.__NANY_HITBOX_ALIGNED__)clearInterval(hitboxPatch);
+    }catch{}
+  },60);
+
+  // Conserva mejoras, delfín y turbo; solo añade una penalización progresiva
+  // por tamaño. Un pez pequeño sigue ágil y uno grande pierde velocidad.
   const speedPatch=setInterval(()=>{
     if(window.__NANY_BASE_SPEED_POLISHED__)return clearInterval(speedPatch);
     const original=getFn('playerSpeed');if(!original)return;
     window.__NANY_BASE_SPEED_POLISHED__=original;
-    window.__NANY_PLAYER_SPEED_POLISHED__=function(){return window.__NANY_BASE_SPEED_POLISHED__()*1.08;};
+    window.__NANY_PLAYER_SPEED_POLISHED__=function(){
+      return window.__NANY_BASE_SPEED_POLISHED__()*1.08*sizeSpeedFactor(visibleRadius());
+    };
     try{window.eval('playerSpeed=window.__NANY_PLAYER_SPEED_POLISHED__')}catch{}
     clearInterval(speedPatch);
+  },60);
+
+  // El flujo original puede intentar abrir gameOver/start después de morir.
+  // Durante la salida multijugador se bloquea esa carrera de callbacks.
+  const menuGuardPatch=setInterval(()=>{
+    try{
+      if(!window.__NANY_ENDGAME_GUARDED__){
+        const originalEnd=getFn('endGame');
+        if(originalEnd){
+          window.__NANY_ORIGINAL_ENDGAME__=originalEnd;
+          window.__NANY_ENDGAME_GUARD__=function(){
+            if(Date.now()<forceLobbyUntil){
+              try{getFn('saveGame')?.()}catch{}
+              forceMultiplayerScreen(lastDeathRewards);return;
+            }
+            return window.__NANY_ORIGINAL_ENDGAME__();
+          };
+          window.eval('endGame=window.__NANY_ENDGAME_GUARD__');
+          window.__NANY_ENDGAME_GUARDED__=true;
+        }
+      }
+      if(!window.__NANY_STARTMENU_GUARDED__){
+        const originalStart=getFn('showStartMenu');
+        if(originalStart){
+          window.__NANY_ORIGINAL_SHOW_START__=originalStart;
+          window.__NANY_SHOW_START_GUARD__=function(){
+            if(Date.now()<forceLobbyUntil){forceMultiplayerScreen(lastDeathRewards);return;}
+            return window.__NANY_ORIGINAL_SHOW_START__();
+          };
+          window.eval('showStartMenu=window.__NANY_SHOW_START_GUARD__');
+          window.__NANY_STARTMENU_GUARDED__=true;
+        }
+      }
+      if(window.__NANY_ENDGAME_GUARDED__&&window.__NANY_STARTMENU_GUARDED__)clearInterval(menuGuardPatch);
+    }catch{}
   },60);
 
   function animateOwnDeath(m){
@@ -97,7 +165,11 @@
       if(pendingRespawn){applyRespawn(pendingRespawn);pendingRespawn=null;}
       if(g.player)g.player._takingDamage=false;g.deathAnim=null;getFn('updateHUD')?.();
     });
-    if(!fn)setTimeout(()=>{if(token!==deathToken)return;if(finalDeath)openMultiplayerLobby(lastDeathRewards);else{if(pendingRespawn){applyRespawn(pendingRespawn);pendingRespawn=null;}if(g.player)g.player._takingDamage=false;g.deathAnim=null;}},2050);
+    if(!fn)setTimeout(()=>{
+      if(token!==deathToken)return;
+      if(finalDeath)openMultiplayerLobby(lastDeathRewards);
+      else{if(pendingRespawn){applyRespawn(pendingRespawn);pendingRespawn=null;}if(g.player)g.player._takingDamage=false;g.deathAnim=null;}
+    },2050);
   }
 
   function DeathFlowWS(url,protocols){
@@ -115,7 +187,7 @@
         if(selfId&&victimId&&victimId!==selfId){const g=getGame();if(authoritativeAlive()&&g?.player?._takingDamage){g.player._takingDamage=false;g.deathAnim=null;}}
         return;
       }
-      if(m.type==='player_dead'&&String(m.id||'')===String(selfId||'')){settleRewards(m);animateOwnDeath(m);return;}
+      if(m.type==='player_dead'&&String(m.id||'')===String(selfId||'')){const rewards=settleRewards(m);lastDeathRewards=rewards;animateOwnDeath(m);return;}
       if(m.type==='respawn'&&String(m.id||m.player?.id||'')===String(selfId||'')){pendingRespawn=m;applyRespawn(m);return;}
       if(m.type==='world_reset'){runCoins=0;runGems=0;}
     });
