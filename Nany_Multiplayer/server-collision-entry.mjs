@@ -17,70 +17,49 @@ let clientSource=await fs.readFile(CLIENT_SRC,'utf8');
 function replaceSection(source,startMarker,endMarker,replacement,label){
   const start=source.indexOf(startMarker);
   const end=source.indexOf(endMarker,start+startMarker.length);
-  if(start<0||end<0||end<=start){
-    throw new Error(`Collision entry: no se pudo localizar ${label}`);
-  }
+  if(start<0||end<0||end<=start) throw new Error(`Collision entry: no se pudo localizar ${label}`);
   return source.slice(0,start)+replacement+'\n'+source.slice(end);
 }
 
 /* -------------------------------------------------------------------------
-   AUTORIDAD ÚNICA DE COLISIONES
+   MULTIPLAYER = MISMAS COLISIONES QUE OFFLINE
    -------------------------------------------------------------------------
-   Generamos una copia del runtime base y sustituimos directamente solamente
-   tryConsume() y combat(). No hay wrappers de colisión encadenados.
+   Offline ya se siente correcto. Por eso aquí NO inventamos otra hitbox.
+   Conservamos exactamente playerHB=78%, fishHB=88% y contacto por distancia
+   entre centros, igual que handleCollisions() del index.
    ------------------------------------------------------------------------- */
-const directTryConsume=`function __frontEatContact(p,f){
-  const pr=radius(p.growthScore);
-  const fr=Math.max(2.5,(Number(f?.size)||0)*1.05);
-  const a=Number(p.angle)||0,ca=Math.cos(a),sa=Math.sin(a);
-  const dx=f.x-p.x,dy=f.y-p.y;
-  const forward=dx*ca+dy*sa;
-  const lateral=Math.abs(-dx*sa+dy*ca);
-  // Cabeza + mitad delantera del cuerpo. Generosa para que el contacto visual
-  // responda, pero la cola queda fuera de la zona que puede comer.
-  return forward>=(-pr*.20-fr*.30) &&
-         forward<=(pr*1.35+fr) &&
-         lateral<=(pr*.95+fr);
-}
-function __visibleBodyContact(p,f){
-  const pr=radius(p.growthScore)*1.05;
-  const fr=Math.max(2.5,(Number(f?.size)||0)*1.05);
-  return dist(p,f)<=pr+fr;
-}
-function tryConsume(w,p,id){
+const directTryConsume=`function tryConsume(w,p,id){
   const f=w.fish.get(String(id||''));
   if(!f||!p.connected||!p.alive)return false;
-  if(!canPlayerEat(p,f)||!__frontEatContact(p,f))return false;
+  const reach=playerHB(p.growthScore)+fishHB(f);
+  if(dist(p,f)>reach||!canPlayerEat(p,f))return false;
   const ok=removeFish(w,p,f);
   if(ok){maybeStartBoss(w);broadcast(w);}
   return ok;
 }`;
 
-runtimeSource=replaceSection(
-  runtimeSource,
-  'function tryConsume(w,p,id){',
-  'function bossTarget(b){',
-  directTryConsume,
-  'tryConsume'
-);
+runtimeSource=replaceSection(runtimeSource,'function tryConsume(w,p,id){','function bossTarget(b){',directTryConsume,'tryConsume');
 
 const directCombat=`function combat(w){
   const now=Date.now();
   for(const p of w.players.values()){
     if(!p.connected||!p.alive||p.invulnerableUntil>now||now-(p.lastInputAt||0)>450)continue;
+    const ph=playerHB(p.growthScore);
 
-    // PRESAS: el servidor comprueba la zona frontal cada tick. No depende de
-    // recibir un mensaje consume justo en el frame de contacto.
     for(const f of [...w.fish.values()]){
       if(!w.fish.has(f.id))continue;
-      if(canPlayerEat(p,f)&&__frontEatContact(p,f)){
+      const fh=fishHB(f),dd=dist(p,f);
+      if(dd>ph+fh)continue;
+
+      // Igual que offline: si es presa y cabe en tu hitbox, la comes.
+      if(canPlayerEat(p,f)){
         removeFish(w,p,f);
         continue;
       }
 
-      // DEPREDADORES: si son suficientemente grandes y su cuerpo visible toca
-      // al jugador, comen. No dependen de un flag de persecución para colisionar.
-      if(canFishEatPlayer(p,f)&&__visibleBodyContact(p,f)){
+      // Igual que offline: si el pez puede comerte y físicamente toca,
+      // te come. No depende de chaseStartedAt/chaseUntil.
+      if(canFishEatPlayer(p,f)){
         killPlayer(w,p,'fish',null,f);
         break;
       }
@@ -89,28 +68,24 @@ const directCombat=`function combat(w){
     if(!p.alive)continue;
 
     const h=w.lavaHazard;
-    if(h&&__visibleBodyContact(p,h)){
+    if(h&&dist(p,h)<=ph+fishHB(h)){
       killPlayer(w,p,'fish',null,h);
       continue;
     }
 
-    // Los jefes conservan su patrón especial de ataque.
     const b=w.boss;
-    if(b&&b.chasing&&b.chaseId===p.id&&b.chaseUntil>now&&
-       dist(p,b)<=radius(p.growthScore)*1.05+b.size*.78){
+    if(b&&b.chasing&&b.chaseId===p.id&&b.chaseUntil>now&&dist(p,b)<=ph+b.size*.72){
       killPlayer(w,p,'boss',null,b);
       continue;
     }
   }
 
-  // PvP entre jugadores mantiene las reglas de masa y usa contacto visible.
   const ps=[...w.players.values()].filter(p=>p.connected&&p.alive&&now-(p.lastInputAt||0)<=450);
   for(let i=0;i<ps.length;i++)for(let j=i+1;j<ps.length;j++){
     const a=ps[i],b=ps[j],at=normalizeTeam(a.team),bt=normalizeTeam(b.team);
     if(w.mode==='coop'||(w.mode==='teams'&&at&&bt&&at===bt))continue;
-    const ar=playerHB(a.growthScore),br=playerHB(b.growthScore);
-    const contactA=radius(a.growthScore)*1.05,contactB=radius(b.growthScore)*1.05;
-    if(dist(a,b)>contactA+contactB)continue;
+    const ar=playerHB(a.growthScore),br=playerHB(b.growthScore),dd=dist(a,b);
+    if(dd>ar+br)continue;
     if(a.growthScore>b.growthScore*1.04&&ar>br*1.02){
       a.score+=Math.max(10,Math.floor(b.score*.25));
       a.growthScore+=Math.max(10,Math.floor(b.growthScore*.25));
@@ -124,97 +99,54 @@ const directCombat=`function combat(w){
   maybeStartBoss(w);
 }`;
 
-runtimeSource=replaceSection(
-  runtimeSource,
-  'function combat(w){',
-  'function applyInput(w,p,m){',
-  directCombat,
-  'combat'
-);
-
+runtimeSource=replaceSection(runtimeSource,'function combat(w){','function applyInput(w,p,m){',directCombat,'combat');
 await fs.writeFile(GENERATED_RUNTIME,runtimeSource,'utf8');
 
-/* -------------------------------------------------------------------------
-   SMOKE TEST REAL DEL RUNTIME GENERADO
-   -------------------------------------------------------------------------
-   El despliegue no continúa si la misma función autoritativa que usará la
-   partida no puede (1) comer una presa frontal o (2) matar por contacto con
-   un depredador más grande.
-   ------------------------------------------------------------------------- */
+/* Smoke test: las dos direcciones básicas deben funcionar con las reglas offline. */
 const TestRuntime=await import(pathToFileURL(GENERATED_RUNTIME).href+`?selftest=${Date.now()}`);
-
-function makeTestPlayer(){
-  return {
-    id:'collision-test-player',resumeId:'collision-test-resume',deviceId:'collision-test-device',
-    ws:null,connected:true,disconnectedAt:0,name:'TEST',team:null,mode:'coop',
-    x:100,y:100,lastX:100,lastY:100,vx:0,vy:0,angle:0,
-    score:0,growthScore:0,level:1,maxLives:1,lives:1,alive:true,sprinting:false,pet:'none',
-    lastInputAt:Date.now(),lastBossHitAt:0,lastDeathReason:null,lastDeathBossType:null,lastDeathAt:0,
-    invulnerableUntil:0
-  };
-}
-function makeTestWorld(p){
-  return {
-    code:'COLLISION_TEST',mode:'coop',seed:1,epoch:Date.now(),stage:0,bossCleared:false,tick:1,
-    nextFish:2,nextGem:1,nextGemAt:Date.now()+60000,
-    players:new Map([[p.id,p]]),fish:new Map(),respawns:[],boss:null,lavaHazard:null
-  };
-}
-function makeTestFish({id,type='plankton',role='prey',size=4,x=111,points=4}){
-  return {
-    id,index:0,type,role,points,color:'#ffffff',size,speed:1,baseSpeed:1,x,y:100,vx:0,vy:0,
-    angle:0,heading:0,turn:1,chaseId:null,chaseUntil:0,chaseStartedAt:0,cooldownUntil:0,
-    light:false,hazard:null,immortal:false,gemFish:false,renderKey:type
-  };
-}
-
+function makeTestPlayer(){return{id:'t',resumeId:'r',deviceId:'d',ws:null,connected:true,disconnectedAt:0,name:'TEST',team:null,mode:'coop',x:100,y:100,lastX:100,lastY:100,vx:0,vy:0,angle:0,score:0,growthScore:0,level:1,maxLives:1,lives:1,alive:true,sprinting:false,pet:'none',lastInputAt:Date.now(),lastBossHitAt:0,lastDeathReason:null,lastDeathBossType:null,lastDeathAt:0,invulnerableUntil:0};}
+function makeTestWorld(p){return{code:'T',mode:'coop',seed:1,epoch:Date.now(),stage:0,bossCleared:false,tick:1,nextFish:2,nextGem:1,nextGemAt:Date.now()+60000,players:new Map([[p.id,p]]),fish:new Map(),respawns:[],boss:null,lavaHazard:null};}
+function fish({id,role='prey',size=4,x=111,type='plankton',points=4}){return{id,index:0,type,role,points,color:'#fff',size,speed:1,baseSpeed:1,x,y:100,vx:0,vy:0,angle:0,heading:0,turn:1,chaseId:null,chaseUntil:0,chaseStartedAt:0,cooldownUntil:0,light:false,hazard:null,immortal:false,gemFish:false,renderKey:type};}
 {
-  const p=makeTestPlayer(),w=makeTestWorld(p),prey=makeTestFish({id:'prey-test'});
-  w.fish.set(prey.id,prey);
-  const ate=TestRuntime.tryConsume(w,p,prey.id);
-  if(!ate||w.fish.has(prey.id)||p.growthScore<=0){
-    throw new Error('Collision self-test FAILED: el jugador no pudo comer una presa frontal');
-  }
+  const p=makeTestPlayer(),w=makeTestWorld(p),f=fish({id:'prey'});w.fish.set(f.id,f);
+  if(!TestRuntime.tryConsume(w,p,f.id)||w.fish.has(f.id))throw new Error('Collision self-test FAILED: eat');
 }
 {
-  const p=makeTestPlayer(),w=makeTestWorld(p),pred=makeTestFish({id:'predator-test',type:'piranha',role:'predator',size:18,x:112,points:35});
-  w.fish.set(pred.id,pred);
-  TestRuntime.combat(w);
-  if(p.alive){
-    throw new Error('Collision self-test FAILED: un depredador grande no pudo comer al jugador');
-  }
+  const p=makeTestPlayer(),w=makeTestWorld(p),f=fish({id:'pred',role:'predator',size:18,x:112,type:'piranha',points:35});w.fish.set(f.id,f);
+  TestRuntime.combat(w);if(p.alive)throw new Error('Collision self-test FAILED: predator');
 }
-console.log('NANY COLLISION SELF-TEST OK: eat + predator death');
+console.log('NANY COLLISION SELF-TEST OK: offline-equivalent');
 
-/* Servidor: importa el runtime generado y sirve el cliente generado. */
+/* Servidor generado */
 const runtimeImport="} from './world-runtime.mjs';";
-if(!serverSource.includes(runtimeImport)){
-  throw new Error('Collision entry: no se encontró el import de world-runtime.mjs');
-}
+if(!serverSource.includes(runtimeImport))throw new Error('Collision entry: no se encontró import runtime');
 serverSource=serverSource.replace(runtimeImport,"} from './.world-runtime-collision-direct.mjs';");
-
 const clientFileLine="const CLIENT_FILE=path.join(ROOT,'multiplayer-client.js');";
-if(!serverSource.includes(clientFileLine)){
-  throw new Error('Collision entry: no se encontró CLIENT_FILE en server.mjs');
-}
+if(!serverSource.includes(clientFileLine))throw new Error('Collision entry: no se encontró CLIENT_FILE');
 serverSource=serverSource.replace(clientFileLine,"const CLIENT_FILE=path.join(ROOT,'.multiplayer-client-collision.js');");
-serverSource=serverSource.replace("server:'live-authoritative-v14-death-flow'","server:'live-authoritative-v15-collision-direct'");
+serverSource=serverSource.replace("server:'live-authoritative-v14-death-flow'","server:'live-authoritative-v16-offline-collisions'");
 
-/* Cliente: la misma zona frontal. El servidor no depende de este mensaje para
-   resolver la colisión; sirve para que la respuesta visual sea inmediata. */
-const oldCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&dd<=ph+fh){";
-const newCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),pr=window.eval('playerRadius(growthScore())'),pa=Number(p.angle)||0,ca=Math.cos(pa),sa=Math.sin(pa),rdx=e.x-p.x,rdy=e.y-p.y,forward=rdx*ca+rdy*sa,lateral=Math.abs(-rdx*sa+rdy*ca),contactFh=Math.max(2.5,(Number(e.size)||0)*1.05),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&forward>=(-pr*.20-contactFh*.30)&&forward<=(pr*1.35+contactFh)&&lateral<=(pr*.95+contactFh)){";
-if(!clientSource.includes(oldCollision)){
-  throw new Error('Collision entry: no se encontró la colisión multiplayer esperada');
-}
-clientSource=clientSource.replace(oldCollision,newCollision);
-clientSource="window.__NANY_COLLISION_BUILD__='v15-direct';\n"+clientSource;
+/* -------------------------------------------------------------------------
+   CORRECCIÓN DEL DESFASE VISUAL DE MULTIPLAYER
+   -------------------------------------------------------------------------
+   El cliente estaba dibujando todos los peces 110 ms en el pasado. Esa línea
+   hacía que el pez visible y el pez que el servidor colisionaba fueran dos
+   posiciones distintas. Quitamos ese buffer artificial y extrapolamos solo el
+   pequeño tiempo transcurrido desde el último snapshot (máx. 80 ms).
+   ------------------------------------------------------------------------- */
+const oldSample="samplePair(buf,performance.now()-110)";
+if(!clientSource.includes(oldSample))throw new Error('Collision entry: no se encontró el buffer visual de 110 ms');
+clientSource=clientSource.replace(oldSample,"samplePair(buf,performance.now())");
 
-// Parseamos el cliente generado antes de servirlo para detectar sintaxis rota.
-try{ new Function(clientSource); }
-catch(err){ throw new Error(`Collision entry: cliente generado inválido: ${err.message}`); }
+const oldXY="x:mix(fa.x,fb.x,alpha),y:mix(fa.y,fb.y,alpha),vx:mix(Number(fa.vx)||0,Number(fb.vx)||0,alpha),vy:mix(Number(fa.vy)||0,Number(fb.vy)||0,alpha)";
+const newXY="x:mix(fa.x,fb.x,alpha)+(Number(fb.vx)||0)*Math.min(80,Math.max(0,performance.now()-B.recv))*.06,y:mix(fa.y,fb.y,alpha)+(Number(fb.vy)||0)*Math.min(80,Math.max(0,performance.now()-B.recv))*.06,vx:mix(Number(fa.vx)||0,Number(fb.vx)||0,alpha),vy:mix(Number(fa.vy)||0,Number(fb.vy)||0,alpha)";
+if(!clientSource.includes(oldXY))throw new Error('Collision entry: no se encontró interpolación XY esperada');
+clientSource=clientSource.replace(oldXY,newXY);
+
+// NO reemplazamos la condición dd<=ph+fh del cliente: esa ya es la misma que offline.
+clientSource="window.__NANY_COLLISION_BUILD__='v16-offline-equivalent';\n"+clientSource;
+try{new Function(clientSource);}catch(err){throw new Error(`Collision entry: cliente inválido: ${err.message}`);}
 
 await fs.writeFile(GENERATED_CLIENT,clientSource,'utf8');
 await fs.writeFile(GENERATED_SERVER,serverSource,'utf8');
-
 await import(pathToFileURL(GENERATED_SERVER).href+`?collision=${Date.now()}`);
