@@ -23,10 +23,12 @@ if(!serverSource.includes(clientFileLine)){
 }
 serverSource=serverSource.replace(clientFileLine,"const CLIENT_FILE=path.join(ROOT,'.multiplayer-client-collision.js');");
 
-// Keep the original 0.78/0.88 values for deciding WHO may eat whom.
-// Only the physical contact test follows the visible fish body (1.05x size).
+// La regla de tamaño (0.78/0.88) sigue decidiendo QUIÉN puede comer a quién.
+// El contacto para comer ya no usa un círculo centrado en todo el jugador:
+// se coloca una zona de mordida delante de la cabeza según p.angle. Así la
+// cabeza come al tocar y la cola deja de funcionar como una boca invisible.
 const oldCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&dd<=ph+fh){";
-const newCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),contactPh=window.eval('playerRadius(growthScore())')*1.05,contactFh=Math.max(2.5,(Number(e.size)||0)*1.05),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&dd<=contactPh+contactFh){";
+const newCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),pr=window.eval('playerRadius(growthScore())'),pa=Number(p.angle)||0,mouthX=p.x+Math.cos(pa)*pr*.92,mouthY=p.y+Math.sin(pa)*pr*.92,biteReach=Math.max(4,pr*.34),contactFh=Math.max(2.5,(Number(e.size)||0)*1.05),biteD=Math.hypot(e.x-mouthX,e.y-mouthY),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&biteD<=biteReach+contactFh){";
 if(!clientSource.includes(oldCollision)){
   throw new Error('Collision entry: no se encontró la colisión multiplayer esperada');
 }
