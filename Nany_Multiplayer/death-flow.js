@@ -28,12 +28,17 @@
     lastPayoutKey=key;
     const amount=runCoins;runCoins=0;
     const s=getSave(),g=getGame();
-    if(!s||s.devMode)return;
-    s.coins=Math.max(0,Math.floor(Number(s.coins)||0))+amount;
+    if(!s)return;
     if(g)g.coins=Math.max(0,Math.floor(Number(g.coins)||0))+amount;
+    const x=Number(m?.victim?.x)||g?.player?.x||0,y=Number(m?.victim?.y)||g?.player?.y||0;
+    if(s.devMode){
+      getFn('spawnFloater')?.(x,y-48,`PRUEBA +${amount} MONEDA${amount===1?'':'S'}`,'#ffd23f');
+      try{window.eval('typeof AudioSys!=="undefined"?AudioSys:null')?.coin?.()}catch{}
+      return;
+    }
+    s.coins=Math.max(0,Math.floor(Number(s.coins)||0))+amount;
     getFn('queueSave')?.();
     getFn('updateHUD')?.();
-    const x=Number(m?.victim?.x)||g?.player?.x||0,y=Number(m?.victim?.y)||g?.player?.y||0;
     getFn('spawnFloater')?.(x,y-48,`+${amount} MONEDA${amount===1?'':'S'}`,'#ffd23f');
     try{window.eval('typeof AudioSys!=="undefined"?AudioSys:null')?.coin?.()}catch{}
   }
