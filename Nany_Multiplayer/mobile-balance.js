@@ -1,13 +1,7 @@
 (()=>{
   'use strict';
 
-  /*
-   * Multiplayer render polish (all devices)
-   * - Reuse fish objects instead of allocating ~260 new objects every render frame.
-   * - Interpolate with a shorter buffer and bounded extrapolation so snapshots do not look like stops/teleports.
-   * - Track pending consumes independently so an eaten fish never flashes back in.
-   * - Show the authoritative killer fish at the death point so remote/local deaths are visually explainable.
-   */
+  /* Multiplayer render polish for all devices. */
   const BUF='__NANY_LIVE_BUF__';
   const RENDER_DELAY_MS=70;
   const MAX_EXTRAP_MS=75;
@@ -95,7 +89,6 @@
     return true;
   }
 
-  /* Observe the already-installed multiplayer WebSocket wrapper. This loads before a player joins. */
   const CurrentWS=window.WebSocket;
   if(CurrentWS&&!window.__NANY_DEATH_CAUSE_SOCKET__){
     function ObservedWS(url,protocols){
@@ -139,6 +132,15 @@
         const fx=KILL_FX[i],t=(now-fx.start)/520;
         if(t>=1){KILL_FX.splice(i,1);continue;}
         const k=fx.killer,v=fx.victim,a=Number(k.angle)||Math.atan2(Number(k.vy)||0,Number(k.vx)||1),s=Math.max(10,Number(k.size)||20);
+
+        // Si el pez autoritativo real ya está junto a la víctima, NO dibujamos
+        // otro pez encima. El fantasma solo existe como respaldo ante lag fuerte.
+        const live=ENTITY_CACHE.get(String(k.id||k.sharedId||''));
+        if(live){
+          const visibleDist=Math.hypot((Number(live.x)||0)-v.x,(Number(live.y)||0)-v.y);
+          if(visibleDist<=Math.max(180,s*3.2)){KILL_FX.splice(i,1);continue;}
+        }
+
         const bite=clamp(t/.30,0,1),retreat=clamp((t-.55)/.45,0,1);
         const sx=Number(k.x)||v.x-Math.cos(a)*s*.9,sy=Number(k.y)||v.y-Math.sin(a)*s*.9;
         const tx=v.x-Math.cos(a)*s*.18,ty=v.y-Math.sin(a)*s*.18;
@@ -162,7 +164,6 @@
     if(window.__NANY_SMOOTH_SYNC_INSTALLED__&&window.__NANY_KILLFX_RENDER_PATCHED__)clearInterval(installer);
   },60);
 
-  /* Existing mobile-only balance. */
   const mobile=(navigator.maxTouchPoints||0)>0 || matchMedia('(pointer:coarse)').matches;
   if(!mobile)return;
 
