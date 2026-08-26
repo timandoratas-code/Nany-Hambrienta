@@ -5,12 +5,24 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT=path.dirname(fileURLToPath(import.meta.url));
 const RUNTIME=path.join(ROOT,'world-runtime.mjs');
 const DEATH_FLOW=path.join(ROOT,'death-flow.js');
+const SERVER=path.join(ROOT,'server.mjs');
+const LOBBY_B64=path.join(ROOT,'lobby-music.b64');
+const LOBBY_MP3=path.join(ROOT,'lobby-music.mp3');
 
 function replaceSection(source,startMarker,endMarker,replacement,label){
   const start=source.indexOf(startMarker);
   const end=source.indexOf(endMarker,start+startMarker.length);
   if(start<0||end<0||end<=start)throw new Error(`Gameplay entry: no se pudo localizar ${label}`);
   return source.slice(0,start)+replacement+'\n'+source.slice(end);
+}
+
+// Materializa el MP3 desde un asset base64 de texto para que GitHub pueda
+// conservarlo aun cuando el conector no permita subir binarios directamente.
+try{
+  const b64=(await fs.readFile(LOBBY_B64,'utf8')).trim();
+  await fs.writeFile(LOBBY_MP3,Buffer.from(b64,'base64'));
+}catch(err){
+  console.warn('Lobby music asset no disponible:',err?.message||err);
 }
 
 let runtimeSource=await fs.readFile(RUNTIME,'utf8');
@@ -61,6 +73,18 @@ const newGrowth="p.score+=f.points;{const gm=p.growthScore<1000?2.00:p.growthSco
 if(!runtimeSource.includes(oldGrowth))throw new Error('Gameplay entry: no se encontró crecimiento base de removeFish');
 runtimeSource=runtimeSource.replace(oldGrowth,newGrowth);
 
+// Presas más alcanzables en multiplayer. Solo se ralentiza alimento normal;
+// depredadores, bosses y lava conservan su velocidad y dificultad.
+const preySpeedReplacements=[
+  ["plankton:{key:'plankton',role:'prey',points:4,color:'#8fffb0',size:4,speed:2.10}","plankton:{key:'plankton',role:'prey',points:4,color:'#8fffb0',size:4,speed:1.72}"],
+  ["minnow:{key:'minnow',role:'prey',points:8,color:'#bfe6ff',size:8,speed:2.55}","minnow:{key:'minnow',role:'prey',points:8,color:'#bfe6ff',size:8,speed:2.08}"],
+  ["green:{key:'green',role:'prey',points:16,color:'#39ff6a',size:10,speed:2.95}","green:{key:'green',role:'prey',points:16,color:'#39ff6a',size:10,speed:2.48}"],
+  ["silver:{key:'silver',role:'prey',points:24,color:'#d9f2ff',size:13,speed:3.20}","silver:{key:'silver',role:'prey',points:24,color:'#d9f2ff',size:13,speed:2.72}"]
+];
+for(const [from,to] of preySpeedReplacements){
+  if(runtimeSource.includes(from))runtimeSource=runtimeSource.replace(from,to);
+}
+
 await fs.writeFile(RUNTIME,runtimeSource,'utf8');
 
 let deathSource=await fs.readFile(DEATH_FLOW,'utf8');
@@ -87,6 +111,26 @@ if(!deathSource.includes(oldFinalHandler))throw new Error('Gameplay entry: no se
 deathSource=deathSource.replace(oldFinalHandler,newLifeHandlers);
 await fs.writeFile(DEATH_FLOW,deathSource,'utf8');
 
-console.log('NANY GAMEPLAY PATCH OK: continuous extra lives + fast growth + offline invulnerability state');
+// Inyecta el parche de controles/música en la página servida y expone el MP3.
+let serverSource=await fs.readFile(SERVER,'utf8');
+if(!serverSource.includes("const DEATH_FLOW_FILE=path.join(ROOT,'death-flow.js');"))throw new Error('Gameplay entry: server.mjs inesperado');
+serverSource=serverSource.replace(
+  "const DEATH_FLOW_FILE=path.join(ROOT,'death-flow.js');",
+  "const DEATH_FLOW_FILE=path.join(ROOT,'death-flow.js');\nconst CLIENT_POLISH_FILE=path.join(ROOT,'client-polish.js');\nconst LOBBY_MUSIC_FILE=path.join(ROOT,'lobby-music.mp3');"
+);
+serverSource=serverSource.replace(
+  "const deathBridge='<script src=\"/death-flow.js?v=14\"></script>';",
+  "const deathBridge='<script src=\"/death-flow.js?v=14\"></script>';\nconst polishBridge='<script src=\"/client-polish.js?v=1\"></script>';"
+);
+const routeNeedle="if(u.pathname==='/death-flow.js'){\n      const js=await fs.readFile(DEATH_FLOW_FILE,'utf8');\n      res.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-store'});\n      return res.end(js);\n    }";
+if(!serverSource.includes(routeNeedle))throw new Error('Gameplay entry: no se encontró ruta death-flow');
+serverSource=serverSource.replace(routeNeedle,routeNeedle+`\n    if(u.pathname==='/client-polish.js'){\n      const js=await fs.readFile(CLIENT_POLISH_FILE,'utf8');\n      res.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-store'});\n      return res.end(js);\n    }\n    if(u.pathname==='/lobby-music.mp3'){\n      const audio=await fs.readFile(LOBBY_MUSIC_FILE);\n      res.writeHead(200,{'Content-Type':'audio/mpeg','Cache-Control':'public, max-age=3600','Accept-Ranges':'bytes'});\n      return res.end(audio);\n    }`);
+serverSource=serverSource.replace(
+  "return res.end(withMobile.replace('</body>',deathBridge+'</body>'));",
+  "const withDeath=withMobile.replace('</body>',deathBridge+'</body>');\n      return res.end(withDeath.replace('</body>',polishBridge+'</body>'));"
+);
+await fs.writeFile(SERVER,serverSource,'utf8');
+
+console.log('NANY GAMEPLAY PATCH OK: lives + fast growth + easier prey + joystick recovery + sprint gating + lobby music');
 
 await import(pathToFileURL(path.join(ROOT,'server-density-entry.mjs')).href+`?gameplay=${Date.now()}`);
