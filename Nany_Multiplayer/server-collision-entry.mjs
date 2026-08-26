@@ -23,12 +23,10 @@ if(!serverSource.includes(clientFileLine)){
 }
 serverSource=serverSource.replace(clientFileLine,"const CLIENT_FILE=path.join(ROOT,'.multiplayer-client-collision.js');");
 
-// La regla de tamaño (0.78/0.88) sigue decidiendo QUIÉN puede comer a quién.
-// El contacto para comer ya no usa un círculo centrado en todo el jugador:
-// se coloca una zona de mordida delante de la cabeza según p.angle. Así la
-// cabeza come al tocar y la cola deja de funcionar como una boca invisible.
+// El cliente usa la misma zona frontal amplia que el servidor. No es un punto
+// diminuto en la boca: cubre cabeza + frente del cuerpo, pero excluye la cola.
 const oldCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&dd<=ph+fh){";
-const newCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),pr=window.eval('playerRadius(growthScore())'),pa=Number(p.angle)||0,mouthX=p.x+Math.cos(pa)*pr*.80,mouthY=p.y+Math.sin(pa)*pr*.80,biteReach=Math.max(3,pr*.28),contactFh=Math.max(2.5,(Number(e.size)||0)*1.05),biteD=Math.hypot(e.x-mouthX,e.y-mouthY),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&biteD<=biteReach+contactFh){";
+const newCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),pr=window.eval('playerRadius(growthScore())'),pa=Number(p.angle)||0,ca=Math.cos(pa),sa=Math.sin(pa),rdx=e.x-p.x,rdy=e.y-p.y,forward=rdx*ca+rdy*sa,lateral=Math.abs(-rdx*sa+rdy*ca),contactFh=Math.max(2.5,(Number(e.size)||0)*1.05),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&forward>=(-pr*.05-contactFh*.25)&&forward<=(pr*1.20+contactFh)&&lateral<=(pr*.78+contactFh)){";
 if(!clientSource.includes(oldCollision)){
   throw new Error('Collision entry: no se encontró la colisión multiplayer esperada');
 }
