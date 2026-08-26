@@ -3,15 +3,16 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
 import {
-  TICK_HZ,SNAP_HZ,MAX_PLAYERS,FISH_N,HEARTBEAT_MS,RESUME_MS,
+  TICK_HZ,SNAP_HZ,MAX_PLAYERS,FISH_N,GEM_FISH_N,HEARTBEAT_MS,RESUME_MS,
   worlds,worldForMode,randomSpawn,stageLevel,teamFor,pubPlayer,snapshot,broadcast,sendAll,send,
-  updateFish,updateBoss,combat,applyInput,tryConsume,tryBossHit,safeName,makeId,makeDeviceId
+  updateFish,updateBoss,combat,applyInput,tryConsume,tryBossHit,devSetMass,devSetStage,safeName,makeId,makeDeviceId
 } from './world-runtime.mjs';
 
 const ROOT=path.dirname(new URL(import.meta.url).pathname);
 const PORT=Number(process.env.PORT||10000);
 const CLIENT_FILE=path.join(ROOT,'multiplayer-client.js');
-const bridge='<script src="/multiplayer-client.js?v=7"></script>';
+const bridge='<script src="/multiplayer-client.js?v=8"></script>';
+const DEV_CODE='7339';
 
 const server=http.createServer(async(req,res)=>{
   try{
@@ -19,8 +20,8 @@ const server=http.createServer(async(req,res)=>{
     if(u.pathname==='/health'){
       res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});
       return res.end(JSON.stringify({
-        ok:true,server:'live-authoritative-v7',worlds:['PVP','PVE','EQUIPO'],
-        fishPerWorld:FISH_N,tickHz:TICK_HZ,snapshotHz:SNAP_HZ,
+        ok:true,server:'live-authoritative-v8',worlds:['PVP','PVE','EQUIPO'],
+        fishPerWorld:FISH_N,gemFishPerWorld:GEM_FISH_N,tickHz:TICK_HZ,snapshotHz:SNAP_HZ,
         stages:Object.fromEntries([...worlds].map(([k,w])=>[k,w.stage])),
         players:Object.fromEntries([...worlds].map(([k,w])=>[k,[...w.players.values()].filter(p=>p.connected).length]))
       }));
@@ -58,8 +59,8 @@ wss.on('connection',ws=>{
           id:deviceId||makeId('player'),resumeId:resumeId||makeId('resume'),deviceId:deviceId||makeDeviceId(),
           ws:null,connected:false,disconnectedAt:0,name:safeName(m.name),team:teamFor(world,m.team),
           x:pos.x,y:pos.y,lastX:pos.x,lastY:pos.y,vx:0,vy:0,angle:0,score:0,growthScore:0,
-          level:stageLevel(world.stage),lives:1,alive:true,sprinting:false,lastInputAt:Date.now(),
-          lastBossHitAt:0,invulnerableUntil:Date.now()+1500
+          level:stageLevel(world.stage),lives:1,alive:true,sprinting:false,pet:'none',petGuardReadyAt:0,
+          devMode:false,lastInputAt:Date.now(),lastBossHitAt:0,invulnerableUntil:Date.now()+1500
         };
         world.players.set(p.id,p);
       }
@@ -74,14 +75,28 @@ wss.on('connection',ws=>{
     if(!player||!world)return;
     if(m.type==='state')applyInput(world,player,m);
     else if(m.type==='consume'){
-      if(!tryConsume(world,player,m.entityId))
-        send(ws,{type:'consume_rejected',entityId:String(m.entityId||''),serverTick:world.tick});
+      if(!tryConsume(world,player,m.entityId))send(ws,{type:'consume_rejected',entityId:String(m.entityId||''),serverTick:world.tick});
     }
     else if(m.type==='boss_hit'){
-      if(!tryBossHit(world,player,m.bossId))
-        send(ws,{type:'boss_hit_rejected',bossId:String(m.bossId||''),serverTick:world.tick});
+      if(!tryBossHit(world,player,m.bossId))send(ws,{type:'boss_hit_rejected',bossId:String(m.bossId||''),serverTick:world.tick});
     }
-    else if(m.type==='boss_defeated'){}
+    else if(m.type==='dev_command'){
+      if(String(m.code||'')===DEV_CODE)player.devMode=true;
+      if(!player.devMode){send(ws,{type:'dev_ack',ok:false,message:'Código inválido'});return;}
+      const action=String(m.action||'');
+      if(action==='auth')send(ws,{type:'dev_ack',ok:true,message:'Modo desarrollador conectado al servidor'});
+      else if(action==='mass'){
+        const value=devSetMass(world,player,m.value);
+        send(ws,{type:'dev_ack',ok:true,action:'mass',value,message:`Masa establecida en ${value}`});
+      }
+      else if(action==='stage'){
+        const stage=devSetStage(world,m.stage);
+        send(ws,{type:'dev_ack',ok:true,action:'stage',stage,message:`Stage ${stage} activado`});
+      }
+      else if(action==='exit'){
+        player.devMode=false;send(ws,{type:'dev_ack',ok:true,action:'exit',message:'Modo desarrollador desactivado'});
+      }
+    }
     else if(m.type==='leave')ws.close(1000,'leave');
   });
   ws.on('close',()=>{
@@ -92,13 +107,8 @@ wss.on('connection',ws=>{
 });
 
 const hb=setInterval(()=>{
-  for(const ws of wss.clients){
-    if(ws.isAlive===false){ws.terminate();continue}
-    ws.isAlive=false;try{ws.ping()}catch{}
-  }
-  for(const w of worlds.values())for(const [id,p] of w.players){
-    if(!p.connected&&p.disconnectedAt&&Date.now()-p.disconnectedAt>RESUME_MS)w.players.delete(id);
-  }
+  for(const ws of wss.clients){if(ws.isAlive===false){ws.terminate();continue}ws.isAlive=false;try{ws.ping()}catch{}}
+  for(const w of worlds.values())for(const [id,p] of w.players){if(!p.connected&&p.disconnectedAt&&Date.now()-p.disconnectedAt>RESUME_MS)w.players.delete(id);}
 },HEARTBEAT_MS);
 hb.unref?.();
 
@@ -109,4 +119,4 @@ setInterval(()=>{
   if(now>=nextSnap){nextSnap=now+1000/SNAP_HZ;for(const w of worlds.values())broadcast(w);}
 },1000/TICK_HZ);
 
-server.listen(PORT,'0.0.0.0',()=>console.log(`NANY LIVE AUTHORITATIVE V7 ${PORT}`));
+server.listen(PORT,'0.0.0.0',()=>console.log(`NANY LIVE AUTHORITATIVE V8 ${PORT}`));
