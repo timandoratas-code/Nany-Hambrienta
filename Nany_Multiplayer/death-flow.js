@@ -5,7 +5,7 @@
   window.__NANY_DEATH_FLOW__=true;
   const BUF='__NANY_LIVE_BUF__';
   let selfId=null,deathToken=0,runCoins=0,runGems=0,lastPayoutKey='';
-  let pendingRespawn=null,lastDeathRewards={coins:0,gems:0},forceLobbyUntil=0;
+  let pendingRespawn=null,lastDeathRewards={coins:0,gems:0},forceLobbyUntil=0,finalDeathPending=false;
 
   const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const getGame=()=>{try{return window.eval('typeof game!=="undefined"?game:null')}catch{return null}};
@@ -66,13 +66,14 @@
     showRewards(rewards||lastDeathRewards);
   }
   function openMultiplayerLobby(rewards){
+    finalDeathPending=false;
     lastDeathRewards=rewards||lastDeathRewards;
     forceLobbyUntil=Date.now()+5000;
     window.__NANY_FORCE_MP_LOBBY_UNTIL__=forceLobbyUntil;
     try{getMultiplayer()?.disconnect?.()}catch{}
     forceMultiplayerScreen(lastDeathRewards);
     for(const delay of [0,80,220,600,1200,2200])setTimeout(()=>{
-      if(Date.now()<forceLobbyUntil)forceMultiplayerScreen(lastDeathRewards);
+      if(Date.now()<forceLobbyUntil&&!finalDeathPending)forceMultiplayerScreen(lastDeathRewards);
     },delay);
   }
   function applyRespawn(m){
@@ -91,7 +92,6 @@
     getFn('spawnFloater')?.(x,y-30,`${name} fue comido`,'#ff7d6b');
   }
 
-  // Mismo tamaño visual = misma hitbox en cliente. El servidor usa la misma regla.
   const hitboxPatch=setInterval(()=>{
     try{
       if(!window.__NANY_HITBOX_ALIGNED__&&getFn('playerHitbox')&&getFn('fishHitbox')){
@@ -105,8 +105,6 @@
     }catch{}
   },60);
 
-  // Conserva mejoras, delfín y turbo; solo añade una penalización progresiva
-  // por tamaño. Un pez pequeño sigue ágil y uno grande pierde velocidad.
   const speedPatch=setInterval(()=>{
     if(window.__NANY_BASE_SPEED_POLISHED__)return clearInterval(speedPatch);
     const original=getFn('playerSpeed');if(!original)return;
@@ -118,8 +116,6 @@
     clearInterval(speedPatch);
   },60);
 
-  // El flujo original puede intentar abrir gameOver/start después de morir.
-  // Durante la salida multijugador se bloquea esa carrera de callbacks.
   const menuGuardPatch=setInterval(()=>{
     try{
       if(!window.__NANY_ENDGAME_GUARDED__){
@@ -128,6 +124,7 @@
           window.__NANY_ORIGINAL_ENDGAME__=originalEnd;
           window.__NANY_ENDGAME_GUARD__=function(){
             if(Date.now()<forceLobbyUntil){
+              if(finalDeathPending)return;
               try{getFn('saveGame')?.()}catch{}
               forceMultiplayerScreen(lastDeathRewards);return;
             }
@@ -142,7 +139,10 @@
         if(originalStart){
           window.__NANY_ORIGINAL_SHOW_START__=originalStart;
           window.__NANY_SHOW_START_GUARD__=function(){
-            if(Date.now()<forceLobbyUntil){forceMultiplayerScreen(lastDeathRewards);return;}
+            if(Date.now()<forceLobbyUntil){
+              if(finalDeathPending)return;
+              forceMultiplayerScreen(lastDeathRewards);return;
+            }
             return window.__NANY_ORIGINAL_SHOW_START__();
           };
           window.eval('showStartMenu=window.__NANY_SHOW_START_GUARD__');
@@ -159,6 +159,11 @@
     g.player._takingDamage=true;g.player.vx=0;g.player.vy=0;g.camShake=Math.max(Number(g.camShake)||0,10);
     try{window.eval('typeof AudioSys!=="undefined"?AudioSys:null')?.hurt?.()}catch{}
     const finalDeath=m.finalDeath!==false;
+    if(finalDeath){
+      finalDeathPending=true;
+      forceLobbyUntil=Date.now()+8000;
+      window.__NANY_FORCE_MP_LOBBY_UNTIL__=forceLobbyUntil;
+    }
     fn?.(finalDeath,()=>{
       if(token!==deathToken)return;
       if(finalDeath){openMultiplayerLobby(lastDeathRewards);return;}
@@ -178,7 +183,7 @@
     ws.send=data=>{let out=data;try{const m=JSON.parse(data);if(m?.type==='join')out=JSON.stringify({...m,maxLives:maxLives()});}catch{}return originalSend(out);};
     ws.addEventListener('message',ev=>{
       let m;try{m=JSON.parse(ev.data)}catch{return}
-      if(m.type==='welcome'){selfId=String(m.id||m.you?.id||m.player?.id||'')||null;runCoins=0;runGems=0;lastPayoutKey='';pendingRespawn=null;deathToken++;return;}
+      if(m.type==='welcome'){selfId=String(m.id||m.you?.id||m.player?.id||'')||null;runCoins=0;runGems=0;lastPayoutKey='';pendingRespawn=null;finalDeathPending=false;deathToken++;return;}
       if(m.type==='entity_removed'&&String(m.by||'')===String(selfId||''))runCoins+=coinValue(m.entity);
       if(m.type==='gem_reward')runGems+=Math.max(1,Math.floor(Number(m.amount)||1));
       if(m.type==='remote_player_death'){showRemoteDeath(m);return;}
