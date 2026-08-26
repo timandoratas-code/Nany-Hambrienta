@@ -14,6 +14,16 @@ if (!source.includes('const parseNanyCookie=')) {
   source = source.replace(marker, marker + helper);
 }
 
+const pvpNeedle = "function combat(w){";
+if (!source.includes('function pvpCombat(w)')) {
+  const pvpBlock = `function pvpCombat(w){if(w.mode!=='ffa')return;const now=Date.now(),ps=[...w.players.values()].filter(p=>p.connected&&p.ws?.readyState===1&&p.alive&&p.invulnerableUntil<=now);for(let i=0;i<ps.length;i++){for(let j=i+1;j<ps.length;j++){const a=ps[i],b=ps[j],d=Math.hypot(a.x-b.x,a.y-b.y);if(d>(a.radius+b.radius)*0.82)continue;const ap=power(a.score),bp=power(b.score);let winner=null,loser=null;if(ap>bp&&a.radius>b.radius*1.01){winner=a;loser=b}else if(bp>ap&&b.radius>a.radius*1.01){winner=b;loser=a}else continue;winner.score=Math.max(0,Math.floor(winner.score)+Math.max(25,Math.floor(loser.score*0.5)));loser.score=0;loser.lives=0;loser.alive=false;loser.vx=0;loser.vy=0;loser.tx=loser.x;loser.ty=loser.y;loser.invulnerableUntil=now+3000;}}}\n`;
+  source = source.replace(pvpNeedle, pvpBlock + pvpNeedle);
+}
+
+const tickNeedle = "w.tick++;movePlayers(w);updateFish(w,dt);combat(w)";
+const tickReplacement = "w.tick++;movePlayers(w);updateFish(w,dt);combat(w);pvpCombat(w)";
+if (source.includes(tickNeedle)) source = source.replace(tickNeedle, tickReplacement);
+
 const pageNeedle = "if(u.pathname==='/'||u.pathname==='/index.html'){const html=await fs.readFile(path.join(ROOT,'index.html'),'utf8');res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html.replace('</head>',bridge+'</head>'));}";
 const pageReplacement = "if(u.pathname==='/'||u.pathname==='/index.html'){ensureNanyCookie(req,res);const html=await fs.readFile(path.join(ROOT,'index.html'),'utf8');res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html.replace('</head>',bridge+'</head>'));}";
 if (source.includes(pageNeedle)) source = source.replace(pageNeedle, pageReplacement);
