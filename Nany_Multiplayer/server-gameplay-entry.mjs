@@ -13,9 +13,6 @@ function replaceSection(source,startMarker,endMarker,replacement,label){
   return source.slice(0,start)+replacement+'\n'+source.slice(end);
 }
 
-/* -------------------------------------------------------------------------
-   VIDAS EXTRA = CONTINUIDAD, NO RESPAWN
-   ------------------------------------------------------------------------- */
 let runtimeSource=await fs.readFile(RUNTIME,'utf8');
 
 const continuousLives=`function killPlayer(w,p,reason,eater=null,killerFish=null){
@@ -59,15 +56,6 @@ runtimeSource=replaceSection(
   'killPlayer'
 );
 
-/* -------------------------------------------------------------------------
-   CURVA DE CRECIMIENTO MÁS RÁPIDA Y DIVERTIDA
-   -------------------------------------------------------------------------
-   Score/leaderboard conserva los puntos originales. Solo growthScore recibe:
-   - x2.00 mientras eres pequeño (<1000)
-   - x1.75 en crecimiento medio (<3000)
-   - x1.50 después
-   Esto acelera la cadena alimenticia al principio sin volver trivial el late game.
-   ------------------------------------------------------------------------- */
 const oldGrowth='p.score+=f.points;p.growthScore+=f.points;';
 const newGrowth="p.score+=f.points;{const gm=p.growthScore<1000?2.00:p.growthScore<3000?1.75:1.50;p.growthScore+=Math.max(1,Math.round(f.points*gm));}";
 if(!runtimeSource.includes(oldGrowth))throw new Error('Gameplay entry: no se encontró crecimiento base de removeFish');
@@ -75,19 +63,19 @@ runtimeSource=runtimeSource.replace(oldGrowth,newGrowth);
 
 await fs.writeFile(RUNTIME,runtimeSource,'utf8');
 
-/* -------------------------------------------------------------------------
-   CLIENTE: VIDA -1 SIN ANIMACIÓN DE MUERTE
-   ------------------------------------------------------------------------- */
 let deathSource=await fs.readFile(DEATH_FLOW,'utf8');
 const oldFinalHandler="if(m.type==='player_dead'&&String(m.id||'')===String(selfId||'')){const rewards=settleRewards(m);lastDeathRewards=rewards;animateOwnDeath(m);return;}";
 const newLifeHandlers=`if(m.type==='life_lost'&&String(m.id||'')===String(selfId||'')){
         const g=getGame(),left=Math.max(0,Number(m.lives)||0);
         if(g){
           g.lives=left;
-          if(g.player)g.player._takingDamage=false;
+          if(g.player){
+            g.player._takingDamage=false;
+            g.player.invuln=Math.max(Number(g.player.invuln)||0,1.5);
+            g.player.hurtFlash=Math.max(Number(g.player.hurtFlash)||0,.18);
+          }
           g.deathAnim=null;
           g.camShake=Math.max(Number(g.camShake)||0,5);
-          try{g.invulnUntil=Math.max(Number(g.invulnUntil)||0,(Number(g.time)||0)+1.5);}catch{}
           getFn('updateHUD')?.();
           getFn('spawnFloater')?.(g.player?.x||0,(g.player?.y||0)-42,\`VIDA -1 · QUEDAN \${left}\`,'#ffd23f');
           try{window.eval('typeof AudioSys!=="undefined"?AudioSys:null')?.hurt?.()}catch{}
@@ -99,6 +87,6 @@ if(!deathSource.includes(oldFinalHandler))throw new Error('Gameplay entry: no se
 deathSource=deathSource.replace(oldFinalHandler,newLifeHandlers);
 await fs.writeFile(DEATH_FLOW,deathSource,'utf8');
 
-console.log('NANY GAMEPLAY PATCH OK: continuous extra lives + fast growth curve 2x/1.75x/1.5x');
+console.log('NANY GAMEPLAY PATCH OK: continuous extra lives + fast growth + offline invulnerability state');
 
 await import(pathToFileURL(path.join(ROOT,'server-density-entry.mjs')).href+`?gameplay=${Date.now()}`);
