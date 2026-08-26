@@ -161,6 +161,16 @@ if(!clientSource.includes(oldCollision)){
 }
 clientSource=clientSource.replace(oldCollision,newCollision);
 
+/* El servidor emite player_dead, no player_death. Antes el cliente actualizaba
+   el stage pero nunca mostraba que el jugador local había sido comido. */
+const oldDeathEvent="if(m.type==='player_dead'||m.type==='respawn')syncStage(m);";
+const newDeathEvent="if(m.type==='player_dead'){syncStage(m);if(String(m.id||m.victim?.id||'')===String(myId()||''))localDeath();}if(m.type==='respawn')syncStage(m);";
+if(!clientSource.includes(oldDeathEvent)){
+  throw new Error('Collision entry: no se encontró el manejo esperado de player_dead');
+}
+clientSource=clientSource.replace(oldDeathEvent,newDeathEvent);
+clientSource="window.__NANY_COLLISION_BUILD__='v15-direct';\n"+clientSource;
+
 await fs.writeFile(GENERATED_CLIENT,clientSource,'utf8');
 await fs.writeFile(GENERATED_SERVER,serverSource,'utf8');
 
