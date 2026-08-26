@@ -28,8 +28,10 @@ function radius(score){
   if(x<10000)return 114+(x-7000)*0.009;
   return 141+Math.min(35,(x-10000)*0.006);
 }
-const playerHB=growth=>radius(growth)*0.78;
-const fishHB=f=>Math.max(2.5,(Number(f?.size)||0)*0.88);
+// Una sola escala: el tamaño visible ES el tamaño de colisión.
+const playerHB=growth=>Math.max(3,radius(growth));
+const fishHB=f=>Math.max(2.5,Number(f?.size)||0);
+const sizeSpeedFactor=size=>clamp(1.08-Math.log2(Math.max(4,Number(size)||4)/4)*0.07,0.70,1.08);
 const stageLevel=stage=>stage<=1?1:stage<=3?2:stage<=5?3:4;
 const isBossStage=stage=>stage===1||stage===3||stage===5;
 const isPredator=f=>f?.role==='predator'||f?.role==='hunter';
@@ -49,10 +51,7 @@ const FISH={
   monster:{key:'monster',role:'predator',points:300,color:'#8d2638',size:44,speed:4.55}
 };
 const LEVEL_POOLS={
-  // Nivel 1 de entrada: 75% presas / 25% depredadores. Sin pez linterna.
   1:[['plankton',100],['minnow',60],['green',35],['piranha',24],['stick',16],['rival',12],['shark',9],['monster',4]],
-  // Nivel 2 conserva aproximadamente la dificultad que antes tenía el Nivel 1,
-  // pero mantiene la progresión de especies y permite el pez linterna rojo.
   2:[['plankton',80],['minnow',50],['green',28],['silver',14],['piranha',27],['stick',20],['rival',16],['lantern',10],['shark',11],['monster',4]],
   3:[['plankton',58],['minnow',44],['green',30],['silver',14],['piranha',28],['stick',20],['rival',20],['lantern',24],['shark',12],['monster',10]],
   4:[['plankton',50],['minnow',40],['green',30],['silver',16],['piranha',28],['stick',20],['rival',20],['lantern',28],['shark',16],['monster',12]]
@@ -61,9 +60,18 @@ function weightedType(level,index){const pool=LEVEL_POOLS[level]||LEVEL_POOLS[4]
 function rng(seed){let s=(seed>>>0)||1;return()=>{s^=s<<13;s>>>=0;s^=s>>>17;s>>>=0;return((s^=s<<5)>>>0)/4294967296;};}
 function randomSpawn(margin=500){return{x:margin+Math.random()*(WORLD_W-margin*2),y:margin+Math.random()*(WORLD_H-margin*2)};}
 function safeFishPos(w,r=Math.random){for(let tries=0;tries<12;tries++){const pos={x:220+r()*(WORLD_W-440),y:220+r()*(WORLD_H-440)};let okay=true;for(const p of w.players.values())if(p.connected&&p.alive&&Math.hypot(pos.x-p.x,pos.y-p.y)<340){okay=false;break;}if(okay)return pos;}return{x:220+r()*(WORLD_W-440),y:220+r()*(WORLD_H-440)};}
-function normalFish(w,index,r=Math.random){const level=stageLevel(w.stage),t=weightedType(level,index),a=r()*Math.PI*2;const predScale=t.role==='predator'?(1.05+r()*0.72)*(1+(level-1)*0.27):(0.88+r()*0.24)*(1+(level-1)*0.04);const size=t.size*predScale,speed=t.speed*(0.93+r()*0.16)*(1+(level-1)*0.045),pos=safeFishPos(w,r);return{id:`${w.code}-fish-${index}-${w.nextFish++}`,index,type:t.key,role:t.role,points:t.points,color:t.color,size,speed,baseSpeed:speed,x:pos.x,y:pos.y,vx:Math.cos(a)*speed*.90,vy:Math.sin(a)*speed*.90,angle:a,heading:a,turn:.30+r()*.75,chaseId:null,chaseUntil:0,chaseStartedAt:0,cooldownUntil:0,light:!!t.light,hazard:null,immortal:false,gemFish:false,renderKey:t.renderKey||t.key};}
-function gemFish(w,index,x,y){const t=FISH.gem,a=Math.random()*Math.PI*2;return{id:`${w.code}-gem-${w.nextGem++}`,index,type:t.key,role:t.role,points:t.points,color:t.color,size:t.size,speed:t.speed,baseSpeed:t.speed,x,y,vx:Math.cos(a)*t.speed*.65,vy:Math.sin(a)*t.speed*.65,angle:a,heading:a,turn:.75+Math.random()*1.4,chaseId:null,chaseUntil:0,chaseStartedAt:0,cooldownUntil:0,light:false,hazard:null,immortal:false,gemFish:true,renderKey:t.renderKey};}
-function makeLavaHazard(w){const pos=safeFishPos(w),a=Math.random()*Math.PI*2,speed=4.70;return{id:`${w.code}-lava-hazard`,index:-1,type:'lava',role:'predator',points:0,color:'#7a0f16',size:48,speed,baseSpeed:speed,x:pos.x,y:pos.y,vx:Math.cos(a)*speed*.82,vy:Math.sin(a)*speed*.82,angle:a,heading:a,turn:.55,chaseId:null,chaseUntil:0,chaseStartedAt:0,cooldownUntil:0,hazard:'lava',immortal:true,light:false,gemFish:false,renderKey:'lava'};}
+function normalFish(w,index,r=Math.random){
+  const level=stageLevel(w.stage),t=weightedType(level,index),a=r()*Math.PI*2;
+  const predScale=t.role==='predator'?(1.05+r()*0.72)*(1+(level-1)*0.27):(0.88+r()*0.24)*(1+(level-1)*0.04);
+  const size=t.size*predScale;
+  const rawSpeed=t.speed*(0.93+r()*0.16)*(1+(level-1)*0.045);
+  // A mayor tamaño, menor velocidad de nado. La especie conserva su carácter,
+  // pero dos ejemplares de distinto tamaño ya no se mueven igual.
+  const speed=rawSpeed*sizeSpeedFactor(size),pos=safeFishPos(w,r);
+  return{id:`${w.code}-fish-${index}-${w.nextFish++}`,index,type:t.key,role:t.role,points:t.points,color:t.color,size,speed,baseSpeed:speed,x:pos.x,y:pos.y,vx:Math.cos(a)*speed*.90,vy:Math.sin(a)*speed*.90,angle:a,heading:a,turn:.30+r()*.75,chaseId:null,chaseUntil:0,chaseStartedAt:0,cooldownUntil:0,light:!!t.light,hazard:null,immortal:false,gemFish:false,renderKey:t.renderKey||t.key};
+}
+function gemFish(w,index,x,y){const t=FISH.gem,a=Math.random()*Math.PI*2,speed=t.speed*sizeSpeedFactor(t.size);return{id:`${w.code}-gem-${w.nextGem++}`,index,type:t.key,role:t.role,points:t.points,color:t.color,size:t.size,speed,baseSpeed:speed,x,y,vx:Math.cos(a)*speed*.65,vy:Math.sin(a)*speed*.65,angle:a,heading:a,turn:.75+Math.random()*1.4,chaseId:null,chaseUntil:0,chaseStartedAt:0,cooldownUntil:0,light:false,hazard:null,immortal:false,gemFish:true,renderKey:t.renderKey};}
+function makeLavaHazard(w){const pos=safeFishPos(w),a=Math.random()*Math.PI*2,size=48,speed=4.70*sizeSpeedFactor(size);return{id:`${w.code}-lava-hazard`,index:-1,type:'lava',role:'predator',points:0,color:'#7a0f16',size,speed,baseSpeed:speed,x:pos.x,y:pos.y,vx:Math.cos(a)*speed*.82,vy:Math.sin(a)*speed*.82,angle:a,heading:a,turn:.55,chaseId:null,chaseUntil:0,chaseStartedAt:0,cooldownUntil:0,hazard:'lava',immortal:true,light:false,gemFish:false,renderKey:'lava'};}
 function makeBoss(w,type){const r=rng((w.seed^((w.stage+1)*0x9E3779B1))>>>0),a=r()*Math.PI*2;const sizes={shrimp:105,lava:118,jelly:128},speeds={shrimp:3.80,lava:4.45,jelly:3.90};return{id:`${w.code}-boss-${w.stage}`,type:'boss',boss:true,bossType:type,x:1000+r()*(WORLD_W-2000),y:1000+r()*(WORLD_H-2000),vx:Math.cos(a)*speeds[type]*.76,vy:Math.sin(a)*speeds[type]*.76,angle:a,heading:a,size:sizes[type],speed:speeds[type],hits:0,chasing:false,chaseId:null,chaseUntil:0,cooldownUntil:0,vulnerableUntil:type==='shrimp'?Infinity:0,turn:.55+r()*.8};}
 function scheduleNextGem(w,now=Date.now(),first=false){w.nextGemAt=now+(first?20000+Math.random()*20000:GEM_SPAWN_INTERVAL_MS);}
 function makeWorld(code,mode){const w={code,mode,seed:(Math.random()*0xffffffff)>>>0,epoch:Date.now(),stage:0,bossCleared:false,tick:0,nextFish:1,nextGem:1,nextGemAt:0,players:new Map(),fish:new Map(),respawns:[],boss:null,lavaHazard:null};populateWorld(w);return w;}
@@ -83,21 +91,18 @@ function maybeStartBoss(w){
   if(w.boss||w.bossCleared)return;
   const connected=[...w.players.values()].filter(p=>p.connected);
   if(!connected.length)return;
-
   if(w.stage===0){
-    // El Camarón solo aparece cuando TODOS los jugadores conectados siguen vivos
-    // y cada uno alcanzó al menos 1000 puntos.
     const everyoneReady=connected.every(p=>p.alive&&Number(p.score||0)>=1000);
     if(everyoneReady){w.stage=1;startBoss(w,'shrimp');broadcastStage(w);}
     return;
   }
-
   const maxScore=Math.max(0,...connected.map(p=>p.score||0));
   if(w.stage===2&&maxScore>=3000){w.stage=3;startBoss(w,'lava');broadcastStage(w);}
   else if(w.stage===4&&maxScore>=6000){w.stage=5;startBoss(w,'jelly');broadcastStage(w);}
 }
-function canPlayerEat(p,f){return !!f.gemFish||(!f.immortal&&f.role==='prey'&&fishHB(f)<playerHB(p.growthScore)*0.96);}
-function canFishEatPlayer(p,f){return isPredator(f)&&fishHB(f)>=playerHB(p.growthScore)*1.04;}
+// Comparación de tamaño visible, no de escalas de hitbox distintas.
+function canPlayerEat(p,f){return !!f.gemFish||(!f.immortal&&f.role==='prey'&&Number(f.size)<radius(p.growthScore)*0.96);}
+function canFishEatPlayer(p,f){return isPredator(f)&&Number(f.size)>=radius(p.growthScore)*1.04;}
 function disengageFish(w,f,now){const old=f.chaseId?w.players.get(f.chaseId):null;f.chaseId=null;f.chaseUntil=0;f.chaseStartedAt=0;f.role='predator';f.speed=f.baseSpeed||f.speed;f.cooldownUntil=now+(f.hazard==='lava'?4200:2800);if(old){const away=Math.atan2(f.y-old.y,f.x-old.x)+(Math.random()-.5)*.35;f.heading=away;const s=f.speed*.82;f.vx=Math.cos(away)*s;f.vy=Math.sin(away)*s;}f.turn=.35+Math.random()*.55;}
 function updateOneFish(w,f,dt,players){const now=Date.now();if(!f.baseSpeed)f.baseSpeed=f.speed;const predator=isPredator(f);if(predator)f.speed=f.baseSpeed;let target=f.chaseId&&f.chaseUntil>now?w.players.get(f.chaseId):null;if(target&&(!target.connected||!target.alive||!predator))target=null;if(f.chaseId&&(!target||f.chaseUntil<=now)){disengageFish(w,f,now);target=null;}const detect=f.hazard==='lava'?400:clamp(260+f.size*1.30,280,390);if(predator&&!target&&!f.chaseId&&f.cooldownUntil<=now){let best=null,bd=Infinity;for(const p of players){const dd=dist(f,p);if(canFishEatPlayer(p,f)&&dd<detect&&dd<bd){best=p;bd=dd;}}if(best){target=best;f.role='hunter';f.chaseId=best.id;f.chaseStartedAt=now;f.chaseUntil=now+CHASE_MS;}}
   if(target){const age=now-(f.chaseStartedAt||now),dd=dist(f,target);if(dd>detect+145){disengageFish(w,f,now);target=null;}else{f.role='hunter';const a=Math.atan2(target.y-f.y,target.x-f.x),chaseSpeed=f.speed*(age<180?.94:1.08);f.heading=a;f.vx+=(Math.cos(a)*chaseSpeed-f.vx)*.58;f.vy+=(Math.sin(a)*chaseSpeed-f.vy)*.58;}}
@@ -116,10 +121,6 @@ function killPlayer(w,p,reason,eater=null,killerFish=null){
   const now=Date.now(),remaining=Math.max(0,(Number(p.lives)||1)-1),finalDeath=remaining<=0;
   p.alive=false;p.lives=remaining;p.vx=0;p.vy=0;p.lastDeathReason=reason;p.lastDeathBossType=killerFish?.boss?killerFish.bossType:null;p.lastDeathAt=now;
   const victim=pubPlayer(p),eaterPub=eater?pubPlayer(eater):null,killerFishPub=killerFish?(killerFish.boss?pubBoss(killerFish):pubFish(killerFish)):null;
-
-  // La víctima recibe el único evento que puede activar su muerte local.
-  // Los demás reciben un evento exclusivamente visual, imposible de confundir
-  // con una muerte propia por los clientes legacy.
   sendAllExcept(w,p.id,{type:'remote_player_death',victimId:p.id,victim,reason,eaterId:eater?.id||null,eater:eaterPub,killerFish:killerFishPub,finalDeath,lives:remaining,maxLives:p.maxLives||1,worldStage:w.stage,bossCleared:w.bossCleared,boss:pubBoss(w.boss),serverTime:now});
   send(p.ws,{type:'player_dead',id:p.id,victim,reason,finalDeath,lives:remaining,maxLives:p.maxLives||1,killerFish:killerFishPub,eater:eaterPub,worldStage:w.stage,bossCleared:w.bossCleared,boss:pubBoss(w.boss),serverTime:now});
   broadcast(w);
@@ -134,10 +135,10 @@ function killPlayer(w,p,reason,eater=null,killerFish=null){
   return true;
 }
 function removeFish(w,p,f){if(!w.fish.has(f.id)||f.immortal)return false;const eaten=pubFish(f);w.fish.delete(f.id);p.score+=f.points;p.growthScore+=f.points;w.respawns.push({index:f.index,at:Date.now()+FISH_RESPAWN_MS});if(f.gemFish)w.nextGemAt=Math.max(w.nextGemAt,Date.now()+GEM_SPAWN_INTERVAL_MS);sendAll(w,{type:'entity_removed',entityId:f.id,entity:eaten,by:p.id,eater:pubPlayer(p),serverTick:w.tick,serverTime:Date.now()});if(f.gemFish)send(p.ws,{type:'gem_reward',amount:1,entityId:f.id,serverTime:Date.now()});return true;}
-function tryConsume(w,p,id){const f=w.fish.get(String(id||''));if(!f||!p.connected||!p.alive)return false;const reach=playerHB(p.growthScore)+fishHB(f)+12;if(dist(p,f)>reach||!canPlayerEat(p,f))return false;const ok=removeFish(w,p,f);if(ok){maybeStartBoss(w);broadcast(w);}return ok;}
+function tryConsume(w,p,id){const f=w.fish.get(String(id||''));if(!f||!p.connected||!p.alive)return false;const reach=playerHB(p.growthScore)+fishHB(f)+4;if(dist(p,f)>reach||!canPlayerEat(p,f))return false;const ok=removeFish(w,p,f);if(ok){maybeStartBoss(w);broadcast(w);}return ok;}
 function bossTarget(b){const a=b.angle||0;if(b.bossType==='shrimp')return{x:b.x-Math.cos(a)*b.size*1.12,y:b.y-Math.sin(a)*b.size*1.12,r:b.size*.36};if(b.bossType==='lava')return{x:b.x-Math.cos(a)*b.size*.92,y:b.y-Math.sin(a)*b.size*.92,r:b.size*.32};return{x:b.x,y:b.y-b.size*.18,r:b.size*.40};}
 function tryBossHit(w,p,bossId){const b=w.boss;if(!b||b.id!==String(bossId||'')||!p.alive||w.bossCleared)return false;const target=bossTarget(b),dd=Math.hypot(p.x-target.x,p.y-target.y),vulnerable=b.bossType==='shrimp'||Date.now()<b.vulnerableUntil||!b.chasing;if(!vulnerable||dd>playerHB(p.growthScore)+target.r+28)return false;const now=Date.now();if(p.lastBossHitAt&&now-p.lastBossHitAt<650)return false;p.lastBossHitAt=now;b.hits=Math.min(BOSS_HITS,b.hits+1);sendAll(w,{type:'boss_state',boss:pubBoss(b),by:p.id,serverTime:now});if(b.hits>=BOSS_HITS){w.bossCleared=true;const type=b.bossType;w.boss=null;sendAll(w,{type:'boss_cleared',stage:w.stage,bossType:type,serverTime:now});broadcast(w);}return true;}
-function combat(w){const now=Date.now();for(const p of w.players.values()){if(!p.connected||!p.alive||p.invulnerableUntil>now||now-(p.lastInputAt||0)>450)continue;const ph=playerHB(p.growthScore);for(const f of w.fish.values()){const fh=fishHB(f),dd=dist(p,f);if(dd>ph+fh)continue;if(canPlayerEat(p,f)){removeFish(w,p,f);continue;}const armed=(f.chaseStartedAt||0)>0&&now-f.chaseStartedAt>=PREDATOR_BITE_ARM_MS;if(canFishEatPlayer(p,f)&&f.chaseId===p.id&&f.chaseUntil>now&&armed){killPlayer(w,p,'fish',null,f);break;}}if(!p.alive)continue;const h=w.lavaHazard;const hazardArmed=h&&(h.chaseStartedAt||0)>0&&now-h.chaseStartedAt>=PREDATOR_BITE_ARM_MS;if(h&&dist(p,h)<=ph+fishHB(h)&&h.chaseId===p.id&&h.chaseUntil>now&&hazardArmed){killPlayer(w,p,'fish',null,h);continue;}const b=w.boss;if(b&&b.chasing&&b.chaseId===p.id&&b.chaseUntil>now&&dist(p,b)<=ph+b.size*.65){killPlayer(w,p,'boss',null,b);continue;}}
+function combat(w){const now=Date.now();for(const p of w.players.values()){if(!p.connected||!p.alive||p.invulnerableUntil>now||now-(p.lastInputAt||0)>450)continue;const ph=playerHB(p.growthScore);for(const f of w.fish.values()){const fh=fishHB(f),dd=dist(p,f);if(dd>ph+fh)continue;if(canPlayerEat(p,f)){removeFish(w,p,f);continue;}const armed=(f.chaseStartedAt||0)>0&&now-f.chaseStartedAt>=PREDATOR_BITE_ARM_MS;if(canFishEatPlayer(p,f)&&f.chaseId===p.id&&f.chaseUntil>now&&armed){killPlayer(w,p,'fish',null,f);break;}}if(!p.alive)continue;const h=w.lavaHazard;const hazardArmed=h&&(h.chaseStartedAt||0)>0&&now-h.chaseStartedAt>=PREDATOR_BITE_ARM_MS;if(h&&dist(p,h)<=ph+fishHB(h)&&h.chaseId===p.id&&h.chaseUntil>now&&hazardArmed){killPlayer(w,p,'fish',null,h);continue;}const b=w.boss;if(b&&b.chasing&&b.chaseId===p.id&&b.chaseUntil>now&&dist(p,b)<=ph+b.size*.72){killPlayer(w,p,'boss',null,b);continue;}}
   const ps=[...w.players.values()].filter(p=>p.connected&&p.alive&&now-(p.lastInputAt||0)<=450);for(let i=0;i<ps.length;i++)for(let j=i+1;j<ps.length;j++){const a=ps[i],b=ps[j],at=normalizeTeam(a.team),bt=normalizeTeam(b.team);if(w.mode==='coop'||(w.mode==='teams'&&at&&bt&&at===bt))continue;const ar=playerHB(a.growthScore),br=playerHB(b.growthScore),dd=dist(a,b);if(dd>ar+br)continue;if(a.growthScore>b.growthScore*1.04&&ar>br*1.02){a.score+=Math.max(10,Math.floor(b.score*.25));a.growthScore+=Math.max(10,Math.floor(b.growthScore*.25));killPlayer(w,b,'player',a);}else if(b.growthScore>a.growthScore*1.04&&br>ar*1.02){b.score+=Math.max(10,Math.floor(a.score*.25));b.growthScore+=Math.max(10,Math.floor(a.growthScore*.25));killPlayer(w,a,'player',b);}}
   maybeStartBoss(w);
 }
