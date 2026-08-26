@@ -12,8 +12,10 @@ const ROOT=path.dirname(new URL(import.meta.url).pathname);
 const PORT=Number(process.env.PORT||10000);
 const CLIENT_FILE=path.join(ROOT,'multiplayer-client.js');
 const MOBILE_BALANCE_FILE=path.join(ROOT,'mobile-balance.js');
-const bridge='<script src="/multiplayer-client.js?v=13"></script>';
-const mobileBridge='<script src="/mobile-balance.js?v=13"></script>';
+const DEATH_FLOW_FILE=path.join(ROOT,'death-flow.js');
+const bridge='<script src="/multiplayer-client.js?v=14"></script>';
+const mobileBridge='<script src="/mobile-balance.js?v=14"></script>';
+const deathBridge='<script src="/death-flow.js?v=14"></script>';
 const DEV_CODE='7339';
 const WORLD_W=12000,WORLD_H=12000;
 
@@ -196,20 +198,26 @@ function clearDangerBubble(w,p){
   }
 }
 
-function resetWorldAfterDeath(w){
+function resetWorldAfterShrimpWipe(w){
   w.__resetScheduled=false;
   for(const p of w.players.values()){
     p.score=0;p.growthScore=0;p.level=1;p.lastBossHitAt=0;
   }
   devSetStage(w,0);
-  sendAll(w,{type:'world_reset',stage:0,reason:'death',serverTime:Date.now()});
+  sendAll(w,{type:'world_reset',stage:0,reason:'shrimp_final_life',serverTime:Date.now()});
   broadcast(w);
 }
 function scheduleWorldResetOnDeath(w){
   if(w.__resetScheduled) return;
-  if(![...w.players.values()].some(p=>p.connected&&!p.alive)) return;
+  const now=Date.now();
+  const wiped=[...w.players.values()].find(p=>
+    p.connected&&!p.alive&&Number(p.lives)<=0&&
+    p.lastDeathReason==='boss'&&p.lastDeathBossType==='shrimp'&&
+    now-Number(p.lastDeathAt||0)<1500
+  );
+  if(!wiped)return;
   w.__resetScheduled=true;
-  setTimeout(()=>resetWorldAfterDeath(w),1150);
+  setTimeout(()=>resetWorldAfterShrimpWipe(w),1150);
 }
 
 const server=http.createServer(async(req,res)=>{
@@ -219,10 +227,10 @@ const server=http.createServer(async(req,res)=>{
       const activeGems=Object.fromEntries([...worlds].map(([k,w])=>[k,[...w.fish.values()].filter(f=>f.gemFish).length]));
       res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});
       return res.end(JSON.stringify({
-        ok:true,server:'live-authoritative-v13-team-chase',worlds:['PVP','PVE','EQUIPO'],
+        ok:true,server:'live-authoritative-v14-death-flow',worlds:['PVP','PVE','EQUIPO'],
         fishPerWorld:FISH_N,gemFishCap:GEM_FISH_CAP,gemSpawnIntervalMs:GEM_SPAWN_INTERVAL_MS,
         chaseMs:1000,predatorWindupMs:320,predatorBiteArmMs:900,predatorCooldownMs:2800,mobileVision:true,friendlyFire:false,
-        bossModel:'index-original',worldResetOnDeath:true,
+        bossModel:'index-original',worldResetRule:'shrimp-final-life-only',staleCombatCutoffMs:450,
         activeGems,tickHz:TICK_HZ,snapshotHz:SNAP_HZ,
         stages:Object.fromEntries([...worlds].map(([k,w])=>[k,w.stage])),
         players:Object.fromEntries([...worlds].map(([k,w])=>[k,[...w.players.values()].filter(p=>p.connected).length]))
@@ -238,11 +246,17 @@ const server=http.createServer(async(req,res)=>{
       res.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-store'});
       return res.end(js);
     }
+    if(u.pathname==='/death-flow.js'){
+      const js=await fs.readFile(DEATH_FLOW_FILE,'utf8');
+      res.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-store'});
+      return res.end(js);
+    }
     if(u.pathname==='/'||u.pathname==='/index.html'){
       const html=await fs.readFile(path.join(ROOT,'index.html'),'utf8');
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
       const withClient=html.replace('</head>',bridge+'</head>');
-      return res.end(withClient.replace('</body>',mobileBridge+'</body>'));
+      const withMobile=withClient.replace('</body>',mobileBridge+'</body>');
+      return res.end(withMobile.replace('</body>',deathBridge+'</body>'));
     }
     res.writeHead(404);res.end('Not found');
   }catch(e){console.error(e);res.writeHead(500);res.end('Server error');}
@@ -260,6 +274,7 @@ wss.on('connection',ws=>{
       const [code,mode]=worldForMode(m.mode);
       world=worlds.get(code);
       const deviceId=String(m.deviceId||''),resumeId=String(m.resumeId||'');
+      const requestedMaxLives=clamp(Math.floor(Number(m.maxLives)||1),1,4);
       let p=[...world.players.values()].find(x=>(deviceId&&x.deviceId===deviceId)||(resumeId&&x.resumeId===resumeId));
       if(p&&p.connected&&p.ws!==ws){try{p.ws.close(4001,'replaced-by-device-session')}catch{}}
       if(!p){
@@ -269,10 +284,21 @@ wss.on('connection',ws=>{
           id:deviceId||makeId('player'),resumeId:resumeId||makeId('resume'),deviceId:deviceId||makeDeviceId(),
           ws:null,connected:false,disconnectedAt:0,name:safeName(m.name),team:teamFor(world,m.team),
           x:pos.x,y:pos.y,lastX:pos.x,lastY:pos.y,vx:0,vy:0,angle:0,score:0,growthScore:0,
-          level:stageLevel(world.stage),lives:1,alive:true,sprinting:false,pet:'none',devMode:false,
-          lastInputAt:Date.now(),lastBossHitAt:0,invulnerableUntil:Date.now()+1800
+          level:stageLevel(world.stage),maxLives:requestedMaxLives,lives:requestedMaxLives,alive:true,sprinting:false,pet:'none',devMode:false,
+          lastInputAt:Date.now(),lastBossHitAt:0,lastDeathReason:null,lastDeathBossType:null,lastDeathAt:0,invulnerableUntil:Date.now()+1800
         };
         world.players.set(p.id,p);
+      }else{
+        p.maxLives=requestedMaxLives;
+        if(!p.alive){
+          const pos=randomSpawn();
+          p.x=pos.x;p.y=pos.y;p.lastX=pos.x;p.lastY=pos.y;p.vx=0;p.vy=0;
+          p.score=0;p.growthScore=0;p.alive=true;p.lives=p.maxLives;
+          p.lastDeathReason=null;p.lastDeathBossType=null;p.lastDeathAt=0;
+          p.invulnerableUntil=Date.now()+1800;
+        }else{
+          p.lives=clamp(Number(p.lives)||p.maxLives,1,p.maxLives);
+        }
       }
       p.ws=ws;p.connected=true;p.disconnectedAt=0;p.name=safeName(m.name||p.name);
       if(world.mode==='teams')p.team=p.team||teamFor(world,m.team);else p.team=null;
@@ -360,4 +386,4 @@ setInterval(()=>{
   }
 },1000/TICK_HZ);
 
-server.listen(PORT,'0.0.0.0',()=>console.log(`NANY LIVE AUTHORITATIVE V13 TEAM CHASE ${PORT}`));
+server.listen(PORT,'0.0.0.0',()=>console.log(`NANY LIVE AUTHORITATIVE V14 DEATH FLOW ${PORT}`));
