@@ -28,7 +28,7 @@ serverSource=serverSource.replace(clientFileLine,"const CLIENT_FILE=path.join(RO
 // se coloca una zona de mordida delante de la cabeza según p.angle. Así la
 // cabeza come al tocar y la cola deja de funcionar como una boca invisible.
 const oldCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&dd<=ph+fh){";
-const newCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),pr=window.eval('playerRadius(growthScore())'),pa=Number(p.angle)||0,mouthX=p.x+Math.cos(pa)*pr*.92,mouthY=p.y+Math.sin(pa)*pr*.92,biteReach=Math.max(4,pr*.34),contactFh=Math.max(2.5,(Number(e.size)||0)*1.05),biteD=Math.hypot(e.x-mouthX,e.y-mouthY),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&biteD<=biteReach+contactFh){";
+const newCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),pr=window.eval('playerRadius(growthScore())'),pa=Number(p.angle)||0,mouthX=p.x+Math.cos(pa)*pr*.80,mouthY=p.y+Math.sin(pa)*pr*.80,biteReach=Math.max(3,pr*.28),contactFh=Math.max(2.5,(Number(e.size)||0)*1.05),biteD=Math.hypot(e.x-mouthX,e.y-mouthY),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&biteD<=biteReach+contactFh){";
 if(!clientSource.includes(oldCollision)){
   throw new Error('Collision entry: no se encontró la colisión multiplayer esperada');
 }
