@@ -12,8 +12,8 @@ const ROOT=path.dirname(new URL(import.meta.url).pathname);
 const PORT=Number(process.env.PORT||10000);
 const CLIENT_FILE=path.join(ROOT,'multiplayer-client.js');
 const MOBILE_BALANCE_FILE=path.join(ROOT,'mobile-balance.js');
-const bridge='<script src="/multiplayer-client.js?v=12"></script>';
-const mobileBridge='<script src="/mobile-balance.js?v=12"></script>';
+const bridge='<script src="/multiplayer-client.js?v=13"></script>';
+const mobileBridge='<script src="/mobile-balance.js?v=13"></script>';
 const DEV_CODE='7339';
 const WORLD_W=12000,WORLD_H=12000;
 
@@ -130,13 +130,13 @@ function tryOriginalBossHit(w,p,bossId){
 }
 
 const PREDATOR_SPEED_CAP={
-  piranha:3.05,
-  stick:2.90,
-  rival:3.20,
-  lantern:3.15,
-  shark:3.55,
-  monster:3.25,
-  lava:3.35
+  piranha:4.25,
+  stick:3.85,
+  rival:4.40,
+  lantern:4.35,
+  shark:4.95,
+  monster:4.55,
+  lava:4.70
 };
 function capVelocity(f,max){
   const speed=Math.hypot(f.vx||0,f.vy||0);
@@ -146,32 +146,34 @@ function balancePredators(w,now){
   const list=[...w.fish.values()];
   if(w.lavaHazard) list.push(w.lavaHazard);
   for(const f of list){
-    if(f.role!=='predator') continue;
-    const cap=PREDATOR_SPEED_CAP[f.type]||3.25;
-    f.speed=Math.min(Number(f.speed)||cap,cap);
+    if(f.role!=='predator'&&f.role!=='hunter') continue;
+    const cap=PREDATOR_SPEED_CAP[f.type]||4.45;
+    f.speed=Math.min(Number(f.baseSpeed||f.speed)||cap,cap);
+    f.baseSpeed=f.speed;
 
     const chasing=!!f.chaseId&&Number(f.chaseUntil)>now;
     if(chasing){
-      if(!f.__balancedChaseStartedAt) f.__balancedChaseStartedAt=now;
+      if(!f.__balancedChaseStartedAt) f.__balancedChaseStartedAt=Number(f.chaseStartedAt)||now;
       const age=now-f.__balancedChaseStartedAt;
-      f.chaseUntil=Math.min(f.chaseUntil,f.__balancedChaseStartedAt+800);
+      f.chaseUntil=Math.min(f.chaseUntil,f.__balancedChaseStartedAt+1000);
 
-      // Los primeros 320 ms son una preparación visible, no una embestida instantánea.
-      const chaseCap=f.speed*(age<320?0.38:0.82);
+      // 320 ms de aviso: el pez ya reacciona, pero todavía no embiste a máxima velocidad.
+      const chaseCap=f.speed*(age<320?0.65:1.16);
       capVelocity(f,chaseCap);
 
-      if(age>=800){
+      if(age>=1000){
         const target=w.players.get(f.chaseId);
         const away=target?Math.atan2(f.y-target.y,f.x-target.x):(f.heading||0)+Math.PI;
-        f.chaseId=null;f.chaseUntil=0;f.__balancedChaseStartedAt=0;
-        f.cooldownUntil=now+(f.hazard==='lava'?6200:5000);
+        f.chaseId=null;f.chaseUntil=0;f.chaseStartedAt=0;f.__balancedChaseStartedAt=0;
+        f.role='predator';
+        f.cooldownUntil=now+(f.hazard==='lava'?4200:2800);
         f.heading=away+(Math.random()-.5)*0.28;
-        f.vx=Math.cos(f.heading)*f.speed*0.62;
-        f.vy=Math.sin(f.heading)*f.speed*0.62;
+        f.vx=Math.cos(f.heading)*f.speed*0.72;
+        f.vy=Math.sin(f.heading)*f.speed*0.72;
       }
     }else{
       f.__balancedChaseStartedAt=0;
-      capVelocity(f,f.speed*0.78);
+      capVelocity(f,f.speed*0.94);
     }
   }
 }
@@ -180,13 +182,13 @@ function clearDangerBubble(w,p){
   const list=[...w.fish.values()];
   if(w.lavaHazard) list.push(w.lavaHazard);
   for(const f of list){
-    if(f.role!=='predator') continue;
+    if(f.role!=='predator'&&f.role!=='hunter') continue;
     const dx=f.x-p.x,dy=f.y-p.y,d=Math.hypot(dx,dy);
     if(d>=safeRadius) continue;
     const a=d>1?Math.atan2(dy,dx):Math.random()*Math.PI*2;
     f.x=clamp(p.x+Math.cos(a)*safeRadius,120,WORLD_W-120);
     f.y=clamp(p.y+Math.sin(a)*safeRadius,120,WORLD_H-120);
-    f.chaseId=null;f.chaseUntil=0;f.__balancedChaseStartedAt=0;
+    f.role='predator';f.chaseId=null;f.chaseUntil=0;f.chaseStartedAt=0;f.__balancedChaseStartedAt=0;
     f.cooldownUntil=Date.now()+3000;
     f.heading=a;
     f.vx=Math.cos(a)*f.speed*0.55;
@@ -217,9 +219,9 @@ const server=http.createServer(async(req,res)=>{
       const activeGems=Object.fromEntries([...worlds].map(([k,w])=>[k,[...w.fish.values()].filter(f=>f.gemFish).length]));
       res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});
       return res.end(JSON.stringify({
-        ok:true,server:'live-authoritative-v12-mobile-balance',worlds:['PVP','PVE','EQUIPO'],
+        ok:true,server:'live-authoritative-v13-team-chase',worlds:['PVP','PVE','EQUIPO'],
         fishPerWorld:FISH_N,gemFishCap:GEM_FISH_CAP,gemSpawnIntervalMs:GEM_SPAWN_INTERVAL_MS,
-        chaseMs:800,predatorWindupMs:320,predatorCooldownMs:5000,mobileVision:true,mobileSpeedMultiplier:1.22,
+        chaseMs:1000,predatorWindupMs:320,predatorBiteArmMs:900,predatorCooldownMs:2800,mobileVision:true,friendlyFire:false,
         bossModel:'index-original',worldResetOnDeath:true,
         activeGems,tickHz:TICK_HZ,snapshotHz:SNAP_HZ,
         stages:Object.fromEntries([...worlds].map(([k,w])=>[k,w.stage])),
@@ -273,13 +275,15 @@ wss.on('connection',ws=>{
         world.players.set(p.id,p);
       }
       p.ws=ws;p.connected=true;p.disconnectedAt=0;p.name=safeName(m.name||p.name);
-      p.team=p.team||teamFor(world,m.team);p.mode=mode;p.level=stageLevel(world.stage);
+      if(world.mode==='teams')p.team=p.team||teamFor(world,m.team);else p.team=null;
+      p.mode=mode;p.level=stageLevel(world.stage);
       p.lastInputAt=Date.now();player=p;
       clearDangerBubble(world,p);
       configureBossLikeOriginal(world,p);
-      send(ws,{...snapshot(world),type:'welcome',resumeId:p.resumeId,id:p.id,team:p.team,
-        teamName:p.team==='A'?'Azul':p.team==='B'?'Rojo':null,you:pubPlayer(p),player:pubPlayer(p)});
-      sendAll(world,{type:'player_joined',player:pubPlayer(p)});
+      const mine=pubPlayer(p);
+      send(ws,{...snapshot(world),type:'welcome',resumeId:p.resumeId,id:p.id,team:mine.team,
+        teamName:mine.teamName,you:mine,player:mine});
+      sendAll(world,{type:'player_joined',player:mine});
       broadcast(world);
       return;
     }
@@ -356,4 +360,4 @@ setInterval(()=>{
   }
 },1000/TICK_HZ);
 
-server.listen(PORT,'0.0.0.0',()=>console.log(`NANY LIVE AUTHORITATIVE V12 MOBILE BALANCE ${PORT}`));
+server.listen(PORT,'0.0.0.0',()=>console.log(`NANY LIVE AUTHORITATIVE V13 TEAM CHASE ${PORT}`));
