@@ -115,7 +115,7 @@ function tryOriginalBossHit(w,p,bossId){
   if(!vulnerable) return false;
   const t=originalBossTarget(b);
   const playerHB=originalPlayerRadius(p.growthScore)*0.78;
-  if(Math.hypot(p.x-t.x,p.y-t.y)>playerHB+t.r+28) return false;
+  if(Math.hypot(p.x-t.x,p.y-t.y)>playerHB+t.r) return false;
   if(p.lastBossHitAt&&now-p.lastBossHitAt<850) return false;
 
   p.lastBossHitAt=now;
