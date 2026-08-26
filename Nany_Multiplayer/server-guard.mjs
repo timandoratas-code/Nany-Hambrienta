@@ -28,6 +28,15 @@ const pageNeedle = "if(u.pathname==='/'||u.pathname==='/index.html'){const html=
 const pageReplacement = "if(u.pathname==='/'||u.pathname==='/index.html'){ensureNanyCookie(req,res);const html=await fs.readFile(path.join(ROOT,'index.html'),'utf8');res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html.replace('</head>',bridge+'</head>'));}";
 if (source.includes(pageNeedle)) source = source.replace(pageNeedle, pageReplacement);
 
+// The authoritative snapshot is the only source of live fish state.
+// Do not require a non-existent game.running flag.
+source = source.replace("if(!g||!g.running||!b.length)return;", "if(!g||!b.length)return;");
+// Never resurrect a fish that is absent from the newest server snapshot.
+source = source.replace("const ids=new Set([...m0.keys(),...m1.keys()]),out=[];", "const ids=new Set(m1.keys()),out=[];");
+source = source.replace("for(const id of ids){const a0=m0.get(id)||m1.get(id),a1=m1.get(id)||a0;", "for(const id of ids){const a0=m0.get(id),a1=m1.get(id);if(!a1)continue;");
+// A dead player sees no server fish until the server sends a live state again.
+source = source.replace("g.entities=out;const me=A.you||A.player;if(me){g.score=me.score;", "g.entities=out;const me=Z.you||A.you||Z.player||A.player;if(me&&!me.alive){g.entities=[];return;}if(me){g.score=me.score;");
+
 const joinStart = source.indexOf("if(m.type==='join'){", source.indexOf("wss.on('connection'"));
 const stateStart = source.indexOf("if(m.type==='state'&&player)", joinStart);
 if (joinStart >= 0 && stateStart > joinStart) {
