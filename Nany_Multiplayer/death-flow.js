@@ -66,6 +66,15 @@
     g.player.vx=0;g.player.vy=0;g.score=Number(p.score)||0;g.growthScore=Number(p.growthScore)||0;g.lives=Math.max(0,Number(p.lives)||0);
     getFn('updateCamera')?.();getFn('updateHUD')?.();
   }
+  function showRemoteDeath(m){
+    const v=m?.victim;if(!v)return;
+    const victimId=String(m.victimId||v.id||'');
+    if(selfId&&victimId===selfId)return;
+    const x=Number(v.x)||0,y=Number(v.y)||0;
+    getFn('spawnParticles')?.(x,y,'#ff6a4d',18);
+    const name=String(v.name||'Jugador').trim().slice(0,18)||'Jugador';
+    getFn('spawnFloater')?.(x,y-30,`${name} fue comido`,'#ff7d6b');
+  }
 
   const speedPatch=setInterval(()=>{
     if(window.__NANY_BASE_SPEED_POLISHED__)return clearInterval(speedPatch);
@@ -100,6 +109,7 @@
       if(m.type==='welcome'){selfId=String(m.id||m.you?.id||m.player?.id||'')||null;runCoins=0;runGems=0;lastPayoutKey='';pendingRespawn=null;deathToken++;return;}
       if(m.type==='entity_removed'&&String(m.by||'')===String(selfId||''))runCoins+=coinValue(m.entity);
       if(m.type==='gem_reward')runGems+=Math.max(1,Math.floor(Number(m.amount)||1));
+      if(m.type==='remote_player_death'){showRemoteDeath(m);return;}
       if(m.type==='player_death'){
         const victimId=String(m.victimId||m.victim?.id||'');
         if(selfId&&victimId&&victimId!==selfId){const g=getGame();if(authoritativeAlive()&&g?.player?._takingDamage){g.player._takingDamage=false;g.deathAnim=null;}}
