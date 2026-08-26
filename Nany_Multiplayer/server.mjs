@@ -11,7 +11,7 @@ import {
 const ROOT=path.dirname(new URL(import.meta.url).pathname);
 const PORT=Number(process.env.PORT||10000);
 const CLIENT_FILE=path.join(ROOT,'multiplayer-client.js');
-const bridge='<script src="/multiplayer-client.js?v=9"></script>';
+const bridge='<script src="/multiplayer-client.js?v=10"></script>';
 const DEV_CODE='7339';
 
 const server=http.createServer(async(req,res)=>{
@@ -20,7 +20,7 @@ const server=http.createServer(async(req,res)=>{
     if(u.pathname==='/health'){
       const activeGems=Object.fromEntries([...worlds].map(([k,w])=>[k,[...w.fish.values()].filter(f=>f.gemFish).length]));
       res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});
-      return res.end(JSON.stringify({ok:true,server:'live-authoritative-v9',worlds:['PVP','PVE','EQUIPO'],fishPerWorld:FISH_N,gemFishCap:GEM_FISH_CAP,gemSpawnIntervalMs:GEM_SPAWN_INTERVAL_MS,activeGems,tickHz:TICK_HZ,snapshotHz:SNAP_HZ,stages:Object.fromEntries([...worlds].map(([k,w])=>[k,w.stage])),players:Object.fromEntries([...worlds].map(([k,w])=>[k,[...w.players.values()].filter(p=>p.connected).length]))}));
+      return res.end(JSON.stringify({ok:true,server:'live-authoritative-v10',worlds:['PVP','PVE','EQUIPO'],fishPerWorld:FISH_N,gemFishCap:GEM_FISH_CAP,gemSpawnIntervalMs:GEM_SPAWN_INTERVAL_MS,chaseMs:1000,activeGems,tickHz:TICK_HZ,snapshotHz:SNAP_HZ,stages:Object.fromEntries([...worlds].map(([k,w])=>[k,w.stage])),players:Object.fromEntries([...worlds].map(([k,w])=>[k,[...w.players.values()].filter(p=>p.connected).length]))}));
     }
     if(u.pathname==='/multiplayer-client.js'){const js=await fs.readFile(CLIENT_FILE,'utf8');res.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-store'});return res.end(js);}
     if(u.pathname==='/'||u.pathname==='/index.html'){const html=await fs.readFile(path.join(ROOT,'index.html'),'utf8');res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});return res.end(html.replace('</head>',bridge+'</head>'));}
@@ -58,4 +58,4 @@ wss.on('connection',ws=>{
 const hb=setInterval(()=>{for(const ws of wss.clients){if(ws.isAlive===false){ws.terminate();continue}ws.isAlive=false;try{ws.ping()}catch{}}for(const w of worlds.values())for(const [id,p] of w.players){if(!p.connected&&p.disconnectedAt&&Date.now()-p.disconnectedAt>RESUME_MS)w.players.delete(id);}},HEARTBEAT_MS);hb.unref?.();
 let last=Date.now(),nextSnap=Date.now();
 setInterval(()=>{const now=Date.now(),dt=Math.min(.05,(now-last)/1000);last=now;for(const w of worlds.values()){w.tick++;updateFish(w,dt);updateBoss(w,dt);combat(w);}if(now>=nextSnap){nextSnap=now+1000/SNAP_HZ;for(const w of worlds.values())broadcast(w);}},1000/TICK_HZ);
-server.listen(PORT,'0.0.0.0',()=>console.log(`NANY LIVE AUTHORITATIVE V9 ${PORT}`));
+server.listen(PORT,'0.0.0.0',()=>console.log(`NANY LIVE AUTHORITATIVE V10 ${PORT}`));
