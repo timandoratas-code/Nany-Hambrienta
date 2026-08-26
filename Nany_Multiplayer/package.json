@@ -1,1 +1,1 @@
-{"name":"nany-hambrienta-multiplayer","version":"4.3.0","type":"module","scripts":{"start":"node server-live2.mjs"},"dependencies":{"ws":"^8.18.0"}}
+{"name":"nany-hambrienta-multiplayer","version":"4.4.0","type":"module","scripts":{"start":"node server-resilient.mjs"},"dependencies":{"ws":"^8.18.0"}}
