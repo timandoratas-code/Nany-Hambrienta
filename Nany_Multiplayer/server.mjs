@@ -11,7 +11,9 @@ import {
 const ROOT=path.dirname(new URL(import.meta.url).pathname);
 const PORT=Number(process.env.PORT||10000);
 const CLIENT_FILE=path.join(ROOT,'multiplayer-client.js');
-const bridge='<script src="/multiplayer-client.js?v=11"></script>';
+const MOBILE_BALANCE_FILE=path.join(ROOT,'mobile-balance.js');
+const bridge='<script src="/multiplayer-client.js?v=12"></script>';
+const mobileBridge='<script src="/mobile-balance.js?v=12"></script>';
 const DEV_CODE='7339';
 const WORLD_W=12000,WORLD_H=12000;
 
@@ -111,8 +113,6 @@ function tryOriginalBossHit(w,p,bossId){
   if(!vulnerable) return false;
   const t=originalBossTarget(b);
   const playerHB=originalPlayerRadius(p.growthScore)*0.78;
-  // El index original usa playerHitbox + radio de cola. En red damos 28 px
-  // de gracia para compensar interpolación/snapshot sin cambiar la zona visual.
   if(Math.hypot(p.x-t.x,p.y-t.y)>playerHB+t.r+28) return false;
   if(p.lastBossHitAt&&now-p.lastBossHitAt<850) return false;
 
@@ -129,12 +129,76 @@ function tryOriginalBossHit(w,p,bossId){
   return true;
 }
 
+const PREDATOR_SPEED_CAP={
+  piranha:3.05,
+  stick:2.90,
+  rival:3.20,
+  lantern:3.15,
+  shark:3.55,
+  monster:3.25,
+  lava:3.35
+};
+function capVelocity(f,max){
+  const speed=Math.hypot(f.vx||0,f.vy||0);
+  if(speed>max&&speed>0){f.vx=f.vx/speed*max;f.vy=f.vy/speed*max;}
+}
+function balancePredators(w,now){
+  const list=[...w.fish.values()];
+  if(w.lavaHazard) list.push(w.lavaHazard);
+  for(const f of list){
+    if(f.role!=='predator') continue;
+    const cap=PREDATOR_SPEED_CAP[f.type]||3.25;
+    f.speed=Math.min(Number(f.speed)||cap,cap);
+
+    const chasing=!!f.chaseId&&Number(f.chaseUntil)>now;
+    if(chasing){
+      if(!f.__balancedChaseStartedAt) f.__balancedChaseStartedAt=now;
+      const age=now-f.__balancedChaseStartedAt;
+      f.chaseUntil=Math.min(f.chaseUntil,f.__balancedChaseStartedAt+800);
+
+      // Los primeros 320 ms son una preparación visible, no una embestida instantánea.
+      const chaseCap=f.speed*(age<320?0.38:0.82);
+      capVelocity(f,chaseCap);
+
+      if(age>=800){
+        const target=w.players.get(f.chaseId);
+        const away=target?Math.atan2(f.y-target.y,f.x-target.x):(f.heading||0)+Math.PI;
+        f.chaseId=null;f.chaseUntil=0;f.__balancedChaseStartedAt=0;
+        f.cooldownUntil=now+(f.hazard==='lava'?6200:5000);
+        f.heading=away+(Math.random()-.5)*0.28;
+        f.vx=Math.cos(f.heading)*f.speed*0.62;
+        f.vy=Math.sin(f.heading)*f.speed*0.62;
+      }
+    }else{
+      f.__balancedChaseStartedAt=0;
+      capVelocity(f,f.speed*0.78);
+    }
+  }
+}
+function clearDangerBubble(w,p){
+  const safeRadius=560;
+  const list=[...w.fish.values()];
+  if(w.lavaHazard) list.push(w.lavaHazard);
+  for(const f of list){
+    if(f.role!=='predator') continue;
+    const dx=f.x-p.x,dy=f.y-p.y,d=Math.hypot(dx,dy);
+    if(d>=safeRadius) continue;
+    const a=d>1?Math.atan2(dy,dx):Math.random()*Math.PI*2;
+    f.x=clamp(p.x+Math.cos(a)*safeRadius,120,WORLD_W-120);
+    f.y=clamp(p.y+Math.sin(a)*safeRadius,120,WORLD_H-120);
+    f.chaseId=null;f.chaseUntil=0;f.__balancedChaseStartedAt=0;
+    f.cooldownUntil=Date.now()+3000;
+    f.heading=a;
+    f.vx=Math.cos(a)*f.speed*0.55;
+    f.vy=Math.sin(a)*f.speed*0.55;
+  }
+}
+
 function resetWorldAfterDeath(w){
   w.__resetScheduled=false;
   for(const p of w.players.values()){
     p.score=0;p.growthScore=0;p.level=1;p.lastBossHitAt=0;
   }
-  // devSetStage(0) limpia boss/lava, reconstruye el cardumen y emite world_stage.
   devSetStage(w,0);
   sendAll(w,{type:'world_reset',stage:0,reason:'death',serverTime:Date.now()});
   broadcast(w);
@@ -143,8 +207,6 @@ function scheduleWorldResetOnDeath(w){
   if(w.__resetScheduled) return;
   if(![...w.players.values()].some(p=>p.connected&&!p.alive)) return;
   w.__resetScheduled=true;
-  // El runtime manda respawn a los 1200 ms. Reiniciamos justo antes:
-  // así nunca reaparece con "la mitad" de los puntos y el boss ya fue despawneado.
   setTimeout(()=>resetWorldAfterDeath(w),1150);
 }
 
@@ -155,9 +217,10 @@ const server=http.createServer(async(req,res)=>{
       const activeGems=Object.fromEntries([...worlds].map(([k,w])=>[k,[...w.fish.values()].filter(f=>f.gemFish).length]));
       res.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'});
       return res.end(JSON.stringify({
-        ok:true,server:'live-authoritative-v11',worlds:['PVP','PVE','EQUIPO'],
+        ok:true,server:'live-authoritative-v12-mobile-balance',worlds:['PVP','PVE','EQUIPO'],
         fishPerWorld:FISH_N,gemFishCap:GEM_FISH_CAP,gemSpawnIntervalMs:GEM_SPAWN_INTERVAL_MS,
-        chaseMs:1000,bossModel:'index-original',worldResetOnDeath:true,
+        chaseMs:800,predatorWindupMs:320,predatorCooldownMs:5000,mobileVision:true,mobileSpeedMultiplier:1.22,
+        bossModel:'index-original',worldResetOnDeath:true,
         activeGems,tickHz:TICK_HZ,snapshotHz:SNAP_HZ,
         stages:Object.fromEntries([...worlds].map(([k,w])=>[k,w.stage])),
         players:Object.fromEntries([...worlds].map(([k,w])=>[k,[...w.players.values()].filter(p=>p.connected).length]))
@@ -168,10 +231,16 @@ const server=http.createServer(async(req,res)=>{
       res.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-store'});
       return res.end(js);
     }
+    if(u.pathname==='/mobile-balance.js'){
+      const js=await fs.readFile(MOBILE_BALANCE_FILE,'utf8');
+      res.writeHead(200,{'Content-Type':'application/javascript; charset=utf-8','Cache-Control':'no-store'});
+      return res.end(js);
+    }
     if(u.pathname==='/'||u.pathname==='/index.html'){
       const html=await fs.readFile(path.join(ROOT,'index.html'),'utf8');
       res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});
-      return res.end(html.replace('</head>',bridge+'</head>'));
+      const withClient=html.replace('</head>',bridge+'</head>');
+      return res.end(withClient.replace('</body>',mobileBridge+'</body>'));
     }
     res.writeHead(404);res.end('Not found');
   }catch(e){console.error(e);res.writeHead(500);res.end('Server error');}
@@ -199,13 +268,14 @@ wss.on('connection',ws=>{
           ws:null,connected:false,disconnectedAt:0,name:safeName(m.name),team:teamFor(world,m.team),
           x:pos.x,y:pos.y,lastX:pos.x,lastY:pos.y,vx:0,vy:0,angle:0,score:0,growthScore:0,
           level:stageLevel(world.stage),lives:1,alive:true,sprinting:false,pet:'none',devMode:false,
-          lastInputAt:Date.now(),lastBossHitAt:0,invulnerableUntil:Date.now()+1500
+          lastInputAt:Date.now(),lastBossHitAt:0,invulnerableUntil:Date.now()+1800
         };
         world.players.set(p.id,p);
       }
       p.ws=ws;p.connected=true;p.disconnectedAt=0;p.name=safeName(m.name||p.name);
       p.team=p.team||teamFor(world,m.team);p.mode=mode;p.level=stageLevel(world.stage);
       p.lastInputAt=Date.now();player=p;
+      clearDangerBubble(world,p);
       configureBossLikeOriginal(world,p);
       send(ws,{...snapshot(world),type:'welcome',resumeId:p.resumeId,id:p.id,team:p.team,
         teamName:p.team==='A'?'Azul':p.team==='B'?'Rojo':null,you:pubPlayer(p),player:pubPlayer(p)});
@@ -271,7 +341,9 @@ setInterval(()=>{
   last=now;
   for(const w of worlds.values()){
     w.tick++;
+    balancePredators(w,now);
     updateFish(w,dt);
+    balancePredators(w,now);
     updateBoss(w,dt);
     combat(w);
     configureBossLikeOriginal(w);
@@ -284,4 +356,4 @@ setInterval(()=>{
   }
 },1000/TICK_HZ);
 
-server.listen(PORT,'0.0.0.0',()=>console.log(`NANY LIVE AUTHORITATIVE V11 ${PORT}`));
+server.listen(PORT,'0.0.0.0',()=>console.log(`NANY LIVE AUTHORITATIVE V12 MOBILE BALANCE ${PORT}`));
