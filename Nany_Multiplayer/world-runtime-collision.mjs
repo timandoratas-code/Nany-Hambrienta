@@ -6,14 +6,11 @@ const {
   updateFish,updateBoss,applyInput,tryBossHit,devSetMass,devSetStage,safeName,makeId,makeDeviceId
 }=Core;
 
-// La silueta visible del pez llega aproximadamente a 1.05 * size.
-// Las reglas 0.78 / 0.88 siguen decidiendo QUIÉN puede comer a quién.
-// Para comer presas usamos una zona frontal de mordida alineada con p.angle;
-// para depredadores mantenemos contacto de cuerpo completo.
+// Una sola regla decide las colisiones de peces en multiplayer:
+// - el tamaño interno 0.78/0.88 sigue decidiendo QUIÉN puede comer a quién;
+// - las presas se comen únicamente desde la mitad frontal del jugador;
+// - los depredadores matan al tocar físicamente el cuerpo visible del jugador.
 const CONTACT_SCALE=1.05;
-const MOUTH_OFFSET_SCALE=0.80;
-const MOUTH_REACH_SCALE=0.28;
-const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 
 function radius(score){
@@ -39,73 +36,84 @@ const canFishEat=(p,f)=>isPredator(f)&&ruleFishHB(f)>=rulePlayerHB(p)*1.04;
 function mouthContact(p,f){
   if(!p||!f)return false;
   const pr=radius(p.growthScore);
+  const fh=contactFishHB(f);
   const a=Number(p.angle)||0;
-  const mx=p.x+Math.cos(a)*pr*MOUTH_OFFSET_SCALE;
-  const my=p.y+Math.sin(a)*pr*MOUTH_OFFSET_SCALE;
-  const biteReach=Math.max(3,pr*MOUTH_REACH_SCALE);
-  return Math.hypot(f.x-mx,f.y-my)<=biteReach+contactFishHB(f);
+  const ca=Math.cos(a),sa=Math.sin(a);
+  const dx=f.x-p.x,dy=f.y-p.y;
+  const forward=dx*ca+dy*sa;
+  const lateral=Math.abs(-dx*sa+dy*ca);
+
+  // Zona frontal amplia: empieza prácticamente en el centro del cuerpo y
+  // llega hasta la nariz visible. La cola queda completamente fuera.
+  return forward>=(-pr*0.05-fh*0.25) &&
+         forward<=(pr*1.20+fh) &&
+         lateral<=(pr*0.78+fh);
 }
 
-function moveEntityToRuleContact(e,p,reach){
+function visibleBodyContact(p,f){
+  return dist(p,f)<=contactPlayerHB(p)+contactFishHB(f);
+}
+
+function moveIntoCoreReach(e,p,reach){
   const ox=e.x,oy=e.y;
   const dx=ox-p.x,dy=oy-p.y,d=Math.hypot(dx,dy);
-  if(!Number.isFinite(d)||d<=reach||d<0.0001)return null;
+  if(!Number.isFinite(d)||d<0.0001||d<=reach)return {x:ox,y:oy,moved:false};
   const target=Math.max(0,reach-0.05);
   e.x=p.x+dx/d*target;
   e.y=p.y+dy/d*target;
-  return {x:ox,y:oy};
+  return {x:ox,y:oy,moved:true};
 }
 
-// El servidor valida la misma mordida frontal que el cliente. Si la boca
-// visible toca una presa pero los antiguos círculos internos aún no se cruzan,
-// proyectamos temporalmente la presa al alcance antiguo solo para reutilizar
-// las reglas originales de puntuación/respawn de Core.tryConsume.
 function tryConsume(w,p,id){
   const f=w?.fish?.get?.(String(id||''));
-  if(!f||!p?.connected||!p?.alive)return Core.tryConsume(w,p,id);
-  if(!canPlayerEat(p,f))return Core.tryConsume(w,p,id);
-  if(!mouthContact(p,f))return false;
+  if(!f||!p?.connected||!p?.alive)return false;
+  if(!canPlayerEat(p,f)||!mouthContact(p,f))return false;
 
   const oldReach=rulePlayerHB(p)+ruleFishHB(f);
-  const d=dist(p,f);
-  if(d<=oldReach)return Core.tryConsume(w,p,id);
-
-  const old=moveEntityToRuleContact(f,p,oldReach);
+  const old=moveIntoCoreReach(f,p,oldReach);
   const ok=Core.tryConsume(w,p,id);
-  if(!ok&&old&&w.fish.get(f.id)===f){f.x=old.x;f.y=old.y;}
+  if(!ok&&old.moved&&w.fish?.get?.(f.id)===f){f.x=old.x;f.y=old.y;}
   return ok;
 }
 
-function chooseContactPlayer(players,f){
-  let best=null,bestRatio=Infinity;
-  for(const p of players){
-    if(!p?.connected||!p?.alive)continue;
-    const now=Date.now();
-    if(Number(p.invulnerableUntil||0)>now||now-Number(p.lastInputAt||0)>450)continue;
-    if(!canFishEat(p,f))continue;
+function eligiblePlayers(players,now){
+  return players.filter(p=>p?.connected&&p?.alive&&Number(p.invulnerableUntil||0)<=now&&now-Number(p.lastInputAt||0)<=450);
+}
 
-    const oldReach=rulePlayerHB(p)+ruleFishHB(f);
-    const visualReach=contactPlayerHB(p)+contactFishHB(f);
+function nearestPredatorVictim(players,f){
+  let best=null,bestD=Infinity;
+  for(const p of players){
+    if(!canFishEat(p,f)||!visibleBodyContact(p,f))continue;
     const d=dist(p,f);
-    if(d<=oldReach||d>visualReach)continue;
-    const ratio=d/Math.max(1,visualReach);
-    if(ratio<bestRatio){bestRatio=ratio;best={p,oldReach};}
+    if(d<bestD){bestD=d;best=p;}
   }
   return best;
 }
 
-// 1) Resolvemos comer presas únicamente desde la boca.
-// 2) Ocultamos temporalmente las presas restantes para impedir que el combat
-//    original las coma con el viejo círculo centrado (incluida la cola).
-// 3) Conservamos el puente de contacto corporal para depredadores y lava.
+function armPredatorContact(saved,f,p,now,kind='fish'){
+  const oldReach=rulePlayerHB(p)+ruleFishHB(f);
+  const old=moveIntoCoreReach(f,p,oldReach);
+  saved.push({
+    kind,e:f,x:old.x,y:old.y,
+    role:f.role,chaseId:f.chaseId,chaseUntil:f.chaseUntil,
+    chaseStartedAt:f.chaseStartedAt,cooldownUntil:f.cooldownUntil
+  });
+  f.role='hunter';
+  f.chaseId=p.id;
+  f.chaseStartedAt=now-1000;
+  f.chaseUntil=now+300;
+  f.cooldownUntil=0;
+}
+
 function combat(w){
   if(!w?.players)return Core.combat(w);
-  const players=[...w.players.values()];
   const now=Date.now();
+  const allPlayers=[...w.players.values()];
+  const players=eligiblePlayers(allPlayers,now);
 
+  // Comer presas: el servidor no espera al mensaje del cliente; valida la
+  // zona frontal cada tick para que tocar con la cabeza responda de inmediato.
   for(const p of players){
-    if(!p?.connected||!p?.alive)continue;
-    if(Number(p.invulnerableUntil||0)>now||now-Number(p.lastInputAt||0)>450)continue;
     for(const f of [...(w.fish?.values?.()||[])]){
       if(!w.fish?.has?.(f.id))continue;
       if(canPlayerEat(p,f)&&mouthContact(p,f))tryConsume(w,p,f.id);
@@ -113,6 +121,9 @@ function combat(w){
   }
 
   const saved=[];
+
+  // Ocultamos las presas restantes SOLO durante Core.combat para impedir que
+  // el círculo antiguo centrado permita comer con la cola.
   for(const f of w.fish?.values?.()||[]){
     if(f?.gemFish||f?.role==='prey'){
       saved.push({kind:'prey',e:f,x:f.x,y:f.y});
@@ -121,41 +132,36 @@ function combat(w){
       continue;
     }
 
-    const hit=chooseContactPlayer(players,f);
-    if(!hit)continue;
-    const old=moveEntityToRuleContact(f,hit.p,hit.oldReach);
-    if(old)saved.push({kind:'fish',e:f,x:old.x,y:old.y});
+    // Un depredador que realmente toca al jugador queda armado para este tick.
+    // Así el contacto físico siempre puede matar y no depende de un estado de
+    // persecución que pudiera haberse desincronizado.
+    const victim=nearestPredatorVictim(players,f);
+    if(victim)armPredatorContact(saved,f,victim,now,'fish');
   }
 
   const h=w.lavaHazard;
   if(h){
-    let best=null,bestRatio=Infinity;
-    for(const p of players){
-      if(!p?.connected||!p?.alive)continue;
-      const tickNow=Date.now();
-      if(Number(p.invulnerableUntil||0)>tickNow||tickNow-Number(p.lastInputAt||0)>450)continue;
-      const oldReach=rulePlayerHB(p)+ruleFishHB(h);
-      const visualReach=contactPlayerHB(p)+contactFishHB(h);
-      const d=dist(p,h);
-      if(d<=oldReach||d>visualReach)continue;
-      const ratio=d/Math.max(1,visualReach);
-      if(ratio<bestRatio){bestRatio=ratio;best={p,oldReach};}
-    }
-    if(best){
-      const old=moveEntityToRuleContact(h,best.p,best.oldReach);
-      if(old)saved.push({kind:'lava',e:h,x:old.x,y:old.y});
-    }
+    const victim=nearestPredatorVictim(players,h);
+    if(victim)armPredatorContact(saved,h,victim,now,'lava');
   }
 
   try{
     return Core.combat(w);
   }finally{
     for(const s of saved){
-      if(s.kind==='prey'||s.kind==='fish'){
+      if(s.kind==='prey'){
         if(w.fish?.get?.(s.e.id)===s.e){s.e.x=s.x;s.e.y=s.y;}
-      }else if(s.kind==='lava'&&w.lavaHazard===s.e){
-        s.e.x=s.x;s.e.y=s.y;
+        continue;
       }
+
+      const stillThere=s.kind==='lava' ? w.lavaHazard===s.e : w.fish?.get?.(s.e.id)===s.e;
+      if(!stillThere)continue;
+      s.e.x=s.x;s.e.y=s.y;
+      s.e.role=s.role;
+      s.e.chaseId=s.chaseId;
+      s.e.chaseUntil=s.chaseUntil;
+      s.e.chaseStartedAt=s.chaseStartedAt;
+      s.e.cooldownUntil=s.cooldownUntil;
     }
   }
 }
