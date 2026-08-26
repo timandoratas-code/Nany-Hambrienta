@@ -28,9 +28,9 @@ function radius(score){
   if(x<10000)return 114+(x-7000)*0.009;
   return 141+Math.min(35,(x-10000)*0.006);
 }
-// Una sola escala: el tamaño visible ES el tamaño de colisión.
-const playerHB=growth=>Math.max(3,radius(growth));
-const fishHB=f=>Math.max(2.5,Number(f?.size)||0);
+// Hitboxes copiadas literalmente del index de referencia.
+const playerHB=growth=>radius(growth)*0.78;
+const fishHB=f=>Math.max(2.5,(Number(f?.size)||0)*0.88);
 const sizeSpeedFactor=size=>clamp(1.08-Math.log2(Math.max(4,Number(size)||4)/4)*0.07,0.70,1.08);
 const stageLevel=stage=>stage<=1?1:stage<=3?2:stage<=5?3:4;
 const isBossStage=stage=>stage===1||stage===3||stage===5;
@@ -65,8 +65,6 @@ function normalFish(w,index,r=Math.random){
   const predScale=t.role==='predator'?(1.05+r()*0.72)*(1+(level-1)*0.27):(0.88+r()*0.24)*(1+(level-1)*0.04);
   const size=t.size*predScale;
   const rawSpeed=t.speed*(0.93+r()*0.16)*(1+(level-1)*0.045);
-  // A mayor tamaño, menor velocidad de nado. La especie conserva su carácter,
-  // pero dos ejemplares de distinto tamaño ya no se mueven igual.
   const speed=rawSpeed*sizeSpeedFactor(size),pos=safeFishPos(w,r);
   return{id:`${w.code}-fish-${index}-${w.nextFish++}`,index,type:t.key,role:t.role,points:t.points,color:t.color,size,speed,baseSpeed:speed,x:pos.x,y:pos.y,vx:Math.cos(a)*speed*.90,vy:Math.sin(a)*speed*.90,angle:a,heading:a,turn:.30+r()*.75,chaseId:null,chaseUntil:0,chaseStartedAt:0,cooldownUntil:0,light:!!t.light,hazard:null,immortal:false,gemFish:false,renderKey:t.renderKey||t.key};
 }
@@ -100,9 +98,8 @@ function maybeStartBoss(w){
   if(w.stage===2&&maxScore>=3000){w.stage=3;startBoss(w,'lava');broadcastStage(w);}
   else if(w.stage===4&&maxScore>=6000){w.stage=5;startBoss(w,'jelly');broadcastStage(w);}
 }
-// Comparación de tamaño visible, no de escalas de hitbox distintas.
-function canPlayerEat(p,f){return !!f.gemFish||(!f.immortal&&f.role==='prey'&&Number(f.size)<radius(p.growthScore)*0.96);}
-function canFishEatPlayer(p,f){return isPredator(f)&&Number(f.size)>=radius(p.growthScore)*1.04;}
+function canPlayerEat(p,f){return !!f.gemFish||(!f.immortal&&f.role==='prey'&&fishHB(f)<playerHB(p.growthScore)*0.96);}
+function canFishEatPlayer(p,f){return isPredator(f)&&fishHB(f)>=playerHB(p.growthScore)*1.04;}
 function disengageFish(w,f,now){const old=f.chaseId?w.players.get(f.chaseId):null;f.chaseId=null;f.chaseUntil=0;f.chaseStartedAt=0;f.role='predator';f.speed=f.baseSpeed||f.speed;f.cooldownUntil=now+(f.hazard==='lava'?4200:2800);if(old){const away=Math.atan2(f.y-old.y,f.x-old.x)+(Math.random()-.5)*.35;f.heading=away;const s=f.speed*.82;f.vx=Math.cos(away)*s;f.vy=Math.sin(away)*s;}f.turn=.35+Math.random()*.55;}
 function updateOneFish(w,f,dt,players){const now=Date.now();if(!f.baseSpeed)f.baseSpeed=f.speed;const predator=isPredator(f);if(predator)f.speed=f.baseSpeed;let target=f.chaseId&&f.chaseUntil>now?w.players.get(f.chaseId):null;if(target&&(!target.connected||!target.alive||!predator))target=null;if(f.chaseId&&(!target||f.chaseUntil<=now)){disengageFish(w,f,now);target=null;}const detect=f.hazard==='lava'?400:clamp(260+f.size*1.30,280,390);if(predator&&!target&&!f.chaseId&&f.cooldownUntil<=now){let best=null,bd=Infinity;for(const p of players){const dd=dist(f,p);if(canFishEatPlayer(p,f)&&dd<detect&&dd<bd){best=p;bd=dd;}}if(best){target=best;f.role='hunter';f.chaseId=best.id;f.chaseStartedAt=now;f.chaseUntil=now+CHASE_MS;}}
   if(target){const age=now-(f.chaseStartedAt||now),dd=dist(f,target);if(dd>detect+145){disengageFish(w,f,now);target=null;}else{f.role='hunter';const a=Math.atan2(target.y-f.y,target.x-f.x),chaseSpeed=f.speed*(age<180?.94:1.08);f.heading=a;f.vx+=(Math.cos(a)*chaseSpeed-f.vx)*.58;f.vy+=(Math.sin(a)*chaseSpeed-f.vy)*.58;}}
@@ -135,7 +132,7 @@ function killPlayer(w,p,reason,eater=null,killerFish=null){
   return true;
 }
 function removeFish(w,p,f){if(!w.fish.has(f.id)||f.immortal)return false;const eaten=pubFish(f);w.fish.delete(f.id);p.score+=f.points;p.growthScore+=f.points;w.respawns.push({index:f.index,at:Date.now()+FISH_RESPAWN_MS});if(f.gemFish)w.nextGemAt=Math.max(w.nextGemAt,Date.now()+GEM_SPAWN_INTERVAL_MS);sendAll(w,{type:'entity_removed',entityId:f.id,entity:eaten,by:p.id,eater:pubPlayer(p),serverTick:w.tick,serverTime:Date.now()});if(f.gemFish)send(p.ws,{type:'gem_reward',amount:1,entityId:f.id,serverTime:Date.now()});return true;}
-function tryConsume(w,p,id){const f=w.fish.get(String(id||''));if(!f||!p.connected||!p.alive)return false;const reach=playerHB(p.growthScore)+fishHB(f)+4;if(dist(p,f)>reach||!canPlayerEat(p,f))return false;const ok=removeFish(w,p,f);if(ok){maybeStartBoss(w);broadcast(w);}return ok;}
+function tryConsume(w,p,id){const f=w.fish.get(String(id||''));if(!f||!p.connected||!p.alive)return false;const reach=playerHB(p.growthScore)+fishHB(f);if(dist(p,f)>reach||!canPlayerEat(p,f))return false;const ok=removeFish(w,p,f);if(ok){maybeStartBoss(w);broadcast(w);}return ok;}
 function bossTarget(b){const a=b.angle||0;if(b.bossType==='shrimp')return{x:b.x-Math.cos(a)*b.size*1.12,y:b.y-Math.sin(a)*b.size*1.12,r:b.size*.36};if(b.bossType==='lava')return{x:b.x-Math.cos(a)*b.size*.92,y:b.y-Math.sin(a)*b.size*.92,r:b.size*.32};return{x:b.x,y:b.y-b.size*.18,r:b.size*.40};}
 function tryBossHit(w,p,bossId){const b=w.boss;if(!b||b.id!==String(bossId||'')||!p.alive||w.bossCleared)return false;const target=bossTarget(b),dd=Math.hypot(p.x-target.x,p.y-target.y),vulnerable=b.bossType==='shrimp'||Date.now()<b.vulnerableUntil||!b.chasing;if(!vulnerable||dd>playerHB(p.growthScore)+target.r+28)return false;const now=Date.now();if(p.lastBossHitAt&&now-p.lastBossHitAt<650)return false;p.lastBossHitAt=now;b.hits=Math.min(BOSS_HITS,b.hits+1);sendAll(w,{type:'boss_state',boss:pubBoss(b),by:p.id,serverTime:now});if(b.hits>=BOSS_HITS){w.bossCleared=true;const type=b.bossType;w.boss=null;sendAll(w,{type:'boss_cleared',stage:w.stage,bossType:type,serverTime:now});broadcast(w);}return true;}
 function combat(w){const now=Date.now();for(const p of w.players.values()){if(!p.connected||!p.alive||p.invulnerableUntil>now||now-(p.lastInputAt||0)>450)continue;const ph=playerHB(p.growthScore);for(const f of w.fish.values()){const fh=fishHB(f),dd=dist(p,f);if(dd>ph+fh)continue;if(canPlayerEat(p,f)){removeFish(w,p,f);continue;}const armed=(f.chaseStartedAt||0)>0&&now-f.chaseStartedAt>=PREDATOR_BITE_ARM_MS;if(canFishEatPlayer(p,f)&&f.chaseId===p.id&&f.chaseUntil>now&&armed){killPlayer(w,p,'fish',null,f);break;}}if(!p.alive)continue;const h=w.lavaHazard;const hazardArmed=h&&(h.chaseStartedAt||0)>0&&now-h.chaseStartedAt>=PREDATOR_BITE_ARM_MS;if(h&&dist(p,h)<=ph+fishHB(h)&&h.chaseId===p.id&&h.chaseUntil>now&&hazardArmed){killPlayer(w,p,'fish',null,h);continue;}const b=w.boss;if(b&&b.chasing&&b.chaseId===p.id&&b.chaseUntil>now&&dist(p,b)<=ph+b.size*.72){killPlayer(w,p,'boss',null,b);continue;}}
