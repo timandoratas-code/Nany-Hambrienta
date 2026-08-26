@@ -26,9 +26,8 @@ function replaceSection(source,startMarker,endMarker,replacement,label){
 /* -------------------------------------------------------------------------
    AUTORIDAD ÚNICA DE COLISIONES
    -------------------------------------------------------------------------
-   No importamos world-runtime-collision.mjs ni encadenamos wrappers. Generamos
-   una copia del runtime base y sustituimos solamente tryConsume() y combat().
-   De esta forma servidor, puntuación, respawn y muerte usan una única regla.
+   Generamos una copia del runtime base y sustituimos directamente solamente
+   tryConsume() y combat(). No hay wrappers de colisión encadenados.
    ------------------------------------------------------------------------- */
 const directTryConsume=`function __frontEatContact(p,f){
   const pr=radius(p.growthScore);
@@ -37,8 +36,8 @@ const directTryConsume=`function __frontEatContact(p,f){
   const dx=f.x-p.x,dy=f.y-p.y;
   const forward=dx*ca+dy*sa;
   const lateral=Math.abs(-dx*sa+dy*ca);
-  // Cabeza + mitad delantera del cuerpo. Es deliberadamente generosa para
-  // que el contacto visual responda, pero la cola queda fuera.
+  // Cabeza + mitad delantera del cuerpo. Generosa para que el contacto visual
+  // responda, pero la cola queda fuera de la zona que puede comer.
   return forward>=(-pr*.20-fr*.30) &&
          forward<=(pr*1.35+fr) &&
          lateral<=(pr*.95+fr);
@@ -71,7 +70,7 @@ const directCombat=`function combat(w){
     if(!p.connected||!p.alive||p.invulnerableUntil>now||now-(p.lastInputAt||0)>450)continue;
 
     // PRESAS: el servidor comprueba la zona frontal cada tick. No depende de
-    // que el cliente alcance a mandar consume justo en el frame de contacto.
+    // recibir un mensaje consume justo en el frame de contacto.
     for(const f of [...w.fish.values()]){
       if(!w.fish.has(f.id))continue;
       if(canPlayerEat(p,f)&&__frontEatContact(p,f)){
@@ -79,8 +78,8 @@ const directCombat=`function combat(w){
         continue;
       }
 
-      // DEPREDADORES: si son suficientemente grandes y el cuerpo visible toca
-      // al jugador, comen. No exigimos un flag de persecución desincronizable.
+      // DEPREDADORES: si son suficientemente grandes y su cuerpo visible toca
+      // al jugador, comen. No dependen de un flag de persecución para colisionar.
       if(canFishEatPlayer(p,f)&&__visibleBodyContact(p,f)){
         killPlayer(w,p,'fish',null,f);
         break;
@@ -104,8 +103,7 @@ const directCombat=`function combat(w){
     }
   }
 
-  // PvP entre jugadores: contacto corporal visible, manteniendo las mismas
-  // reglas de masa/tamaño para decidir quién puede comer a quién.
+  // PvP entre jugadores mantiene las reglas de masa y usa contacto visible.
   const ps=[...w.players.values()].filter(p=>p.connected&&p.alive&&now-(p.lastInputAt||0)<=450);
   for(let i=0;i<ps.length;i++)for(let j=i+1;j<ps.length;j++){
     const a=ps[i],b=ps[j],at=normalizeTeam(a.team),bt=normalizeTeam(b.team);
@@ -136,9 +134,59 @@ runtimeSource=replaceSection(
 
 await fs.writeFile(GENERATED_RUNTIME,runtimeSource,'utf8');
 
-/* Servidor: importa directamente el runtime generado y sirve el cliente
-   generado. También exponemos una firma nueva en /health para comprobar que
-   el despliegue realmente arrancó esta versión. */
+/* -------------------------------------------------------------------------
+   SMOKE TEST REAL DEL RUNTIME GENERADO
+   -------------------------------------------------------------------------
+   El despliegue no continúa si la misma función autoritativa que usará la
+   partida no puede (1) comer una presa frontal o (2) matar por contacto con
+   un depredador más grande.
+   ------------------------------------------------------------------------- */
+const TestRuntime=await import(pathToFileURL(GENERATED_RUNTIME).href+`?selftest=${Date.now()}`);
+
+function makeTestPlayer(){
+  return {
+    id:'collision-test-player',resumeId:'collision-test-resume',deviceId:'collision-test-device',
+    ws:null,connected:true,disconnectedAt:0,name:'TEST',team:null,mode:'coop',
+    x:100,y:100,lastX:100,lastY:100,vx:0,vy:0,angle:0,
+    score:0,growthScore:0,level:1,maxLives:1,lives:1,alive:true,sprinting:false,pet:'none',
+    lastInputAt:Date.now(),lastBossHitAt:0,lastDeathReason:null,lastDeathBossType:null,lastDeathAt:0,
+    invulnerableUntil:0
+  };
+}
+function makeTestWorld(p){
+  return {
+    code:'COLLISION_TEST',mode:'coop',seed:1,epoch:Date.now(),stage:0,bossCleared:false,tick:1,
+    nextFish:2,nextGem:1,nextGemAt:Date.now()+60000,
+    players:new Map([[p.id,p]]),fish:new Map(),respawns:[],boss:null,lavaHazard:null
+  };
+}
+function makeTestFish({id,type='plankton',role='prey',size=4,x=111,points=4}){
+  return {
+    id,index:0,type,role,points,color:'#ffffff',size,speed:1,baseSpeed:1,x,y:100,vx:0,vy:0,
+    angle:0,heading:0,turn:1,chaseId:null,chaseUntil:0,chaseStartedAt:0,cooldownUntil:0,
+    light:false,hazard:null,immortal:false,gemFish:false,renderKey:type
+  };
+}
+
+{
+  const p=makeTestPlayer(),w=makeTestWorld(p),prey=makeTestFish({id:'prey-test'});
+  w.fish.set(prey.id,prey);
+  const ate=TestRuntime.tryConsume(w,p,prey.id);
+  if(!ate||w.fish.has(prey.id)||p.growthScore<=0){
+    throw new Error('Collision self-test FAILED: el jugador no pudo comer una presa frontal');
+  }
+}
+{
+  const p=makeTestPlayer(),w=makeTestWorld(p),pred=makeTestFish({id:'predator-test',type:'piranha',role:'predator',size:18,x:112,points:35});
+  w.fish.set(pred.id,pred);
+  TestRuntime.combat(w);
+  if(p.alive){
+    throw new Error('Collision self-test FAILED: un depredador grande no pudo comer al jugador');
+  }
+}
+console.log('NANY COLLISION SELF-TEST OK: eat + predator death');
+
+/* Servidor: importa el runtime generado y sirve el cliente generado. */
 const runtimeImport="} from './world-runtime.mjs';";
 if(!serverSource.includes(runtimeImport)){
   throw new Error('Collision entry: no se encontró el import de world-runtime.mjs');
@@ -152,24 +200,19 @@ if(!serverSource.includes(clientFileLine)){
 serverSource=serverSource.replace(clientFileLine,"const CLIENT_FILE=path.join(ROOT,'.multiplayer-client-collision.js');");
 serverSource=serverSource.replace("server:'live-authoritative-v14-death-flow'","server:'live-authoritative-v15-collision-direct'");
 
-/* Cliente: usa la misma zona frontal generosa. El servidor NO depende de este
-   envío para resolver la colisión; esto solo hace la respuesta visual inmediata. */
+/* Cliente: la misma zona frontal. El servidor no depende de este mensaje para
+   resolver la colisión; sirve para que la respuesta visual sea inmediata. */
 const oldCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&dd<=ph+fh){";
 const newCollision="const fh=fhFn?.(e)||Math.max(2.5,e.size*.88),pr=window.eval('playerRadius(growthScore())'),pa=Number(p.angle)||0,ca=Math.cos(pa),sa=Math.sin(pa),rdx=e.x-p.x,rdy=e.y-p.y,forward=rdx*ca+rdy*sa,lateral=Math.abs(-rdx*sa+rdy*ca),contactFh=Math.max(2.5,(Number(e.size)||0)*1.05),edible=e.gemFish||(e.ecologyRole==='prey'&&fh<ph*.96);if(edible&&forward>=(-pr*.20-contactFh*.30)&&forward<=(pr*1.35+contactFh)&&lateral<=(pr*.95+contactFh)){";
 if(!clientSource.includes(oldCollision)){
   throw new Error('Collision entry: no se encontró la colisión multiplayer esperada');
 }
 clientSource=clientSource.replace(oldCollision,newCollision);
-
-/* El servidor emite player_dead, no player_death. Antes el cliente actualizaba
-   el stage pero nunca mostraba que el jugador local había sido comido. */
-const oldDeathEvent="if(m.type==='player_dead'||m.type==='respawn')syncStage(m);";
-const newDeathEvent="if(m.type==='player_dead'){syncStage(m);if(String(m.id||m.victim?.id||'')===String(myId()||''))localDeath();}if(m.type==='respawn')syncStage(m);";
-if(!clientSource.includes(oldDeathEvent)){
-  throw new Error('Collision entry: no se encontró el manejo esperado de player_dead');
-}
-clientSource=clientSource.replace(oldDeathEvent,newDeathEvent);
 clientSource="window.__NANY_COLLISION_BUILD__='v15-direct';\n"+clientSource;
+
+// Parseamos el cliente generado antes de servirlo para detectar sintaxis rota.
+try{ new Function(clientSource); }
+catch(err){ throw new Error(`Collision entry: cliente generado inválido: ${err.message}`); }
 
 await fs.writeFile(GENERATED_CLIENT,clientSource,'utf8');
 await fs.writeFile(GENERATED_SERVER,serverSource,'utf8');
