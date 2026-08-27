@@ -20,26 +20,50 @@
     }catch{}
   };
 
-  // Recuperación automática del joystick en móvil si iOS/Android pierde el pointer.
+  // Recuperación del joystick en móvil.
+  // IMPORTANTE: movimiento y sprint son punteros distintos.
+  // Soltar/cancelar el dedo de sprint NUNCA debe apagar el joystick.
   const patchJoystick=()=>{
     if(!mobile||window.__NANY_JOYSTICK_RECOVERY__)return;
     const canvas=document.getElementById('gameCanvas');
     if(!canvas)return;
     window.__NANY_JOYSTICK_RECOVERY__=true;
-    const reset=()=>{
+
+    const resetMovement=()=>{
       try{window.eval('if(typeof endTouch==="function")endTouch(); else { activePointerId=null; joyOrigin=null; input.active=false; }')}catch{}
+    };
+    const resetAll=()=>{
+      resetMovement();
       try{window.eval('game.sprintPointerId=null; stopSprint();')}catch{}
     };
-    canvas.addEventListener('lostpointercapture',reset,{passive:true});
-    canvas.addEventListener('pointercancel',reset,{passive:true});
-    window.addEventListener('blur',reset,{passive:true});
-    document.addEventListener('visibilitychange',()=>{if(document.hidden)reset();},{passive:true});
-    window.addEventListener('orientationchange',()=>setTimeout(reset,30),{passive:true});
+    const handlePointerLoss=e=>{
+      if(!e||e.pointerType==='mouse')return;
+      try{
+        const moveId=window.eval('activePointerId');
+        const sprintId=window.eval('game.sprintPointerId');
+        if(e.pointerId===sprintId){
+          // El dedo secundario terminó: solo se detiene el sprint.
+          window.eval('game.sprintPointerId=null; stopSprint();');
+          return;
+        }
+        if(e.pointerId===moveId){
+          // Solo el dedo principal puede cerrar el joystick.
+          resetMovement();
+        }
+      }catch{}
+    };
+
+    canvas.addEventListener('lostpointercapture',handlePointerLoss,{passive:true});
+    canvas.addEventListener('pointercancel',handlePointerLoss,{passive:true});
+    window.addEventListener('blur',resetAll,{passive:true});
+    document.addEventListener('visibilitychange',()=>{if(document.hidden)resetAll();},{passive:true});
+    window.addEventListener('orientationchange',()=>setTimeout(resetAll,30),{passive:true});
+
     canvas.addEventListener('pointerdown',e=>{
       if(e.pointerType==='mouse')return;
       try{
         const stuck=window.eval('activePointerId!==null && (!joyOrigin || document.getElementById("joystick")?.style.display==="none")');
-        if(stuck)reset();
+        if(stuck)resetMovement();
       }catch{}
     },true);
   };
