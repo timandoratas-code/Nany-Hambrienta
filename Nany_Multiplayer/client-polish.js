@@ -1,72 +1,10 @@
 (()=>{
   'use strict';
   const getGame=()=>{try{return window.eval('typeof game!=="undefined"?game:null')}catch{return null}};
-  const getFn=name=>{try{return window.eval(`typeof ${name}==="function"?${name}:null`)}catch{return null}};
-  const mobile=(navigator.maxTouchPoints||0)>0 || (window.matchMedia&&matchMedia('(pointer:coarse)').matches);
 
-  // Sprint solo cuando el pez ya se está moviendo.
-  const patchSprint=()=>{
-    try{
-      const original=getFn('startSprint');
-      if(!original||window.__NANY_SPRINT_GATED__)return;
-      window.__NANY_SPRINT_GATED__=true;
-      window.__NANY_START_SPRINT__=function(){
-        const g=getGame(),p=g?.player;
-        const moving=!!p && (Math.hypot(Number(p.vx)||0,Number(p.vy)||0)>0.18 || (()=>{try{return window.eval('keyboardActive() || (input.active && input.tx!=null)')}catch{return false}})());
-        if(!moving){try{g.sprintRequested=false;g.sprintActive=false;}catch{}return false;}
-        return original();
-      };
-      window.eval('startSprint=window.__NANY_START_SPRINT__');
-    }catch{}
-  };
-
-  // Recuperación del joystick en móvil.
-  // IMPORTANTE: movimiento y sprint son punteros distintos.
-  // Soltar/cancelar el dedo de sprint NUNCA debe apagar el joystick.
-  const patchJoystick=()=>{
-    if(!mobile||window.__NANY_JOYSTICK_RECOVERY__)return;
-    const canvas=document.getElementById('gameCanvas');
-    if(!canvas)return;
-    window.__NANY_JOYSTICK_RECOVERY__=true;
-
-    const resetMovement=()=>{
-      try{window.eval('if(typeof endTouch==="function")endTouch(); else { activePointerId=null; joyOrigin=null; input.active=false; }')}catch{}
-    };
-    const resetAll=()=>{
-      resetMovement();
-      try{window.eval('game.sprintPointerId=null; stopSprint();')}catch{}
-    };
-    const handlePointerLoss=e=>{
-      if(!e||e.pointerType==='mouse')return;
-      try{
-        const moveId=window.eval('activePointerId');
-        const sprintId=window.eval('game.sprintPointerId');
-        if(e.pointerId===sprintId){
-          // El dedo secundario terminó: solo se detiene el sprint.
-          window.eval('game.sprintPointerId=null; stopSprint();');
-          return;
-        }
-        if(e.pointerId===moveId){
-          // Solo el dedo principal puede cerrar el joystick.
-          resetMovement();
-        }
-      }catch{}
-    };
-
-    canvas.addEventListener('lostpointercapture',handlePointerLoss,{passive:true});
-    canvas.addEventListener('pointercancel',handlePointerLoss,{passive:true});
-    window.addEventListener('blur',resetAll,{passive:true});
-    document.addEventListener('visibilitychange',()=>{if(document.hidden)resetAll();},{passive:true});
-    window.addEventListener('orientationchange',()=>setTimeout(resetAll,30),{passive:true});
-
-    canvas.addEventListener('pointerdown',e=>{
-      if(e.pointerType==='mouse')return;
-      try{
-        const stuck=window.eval('activePointerId!==null && (!joyOrigin || document.getElementById("joystick")?.style.display==="none")');
-        if(stuck)resetMovement();
-      }catch{}
-    },true);
-  };
+  // Se restauran los controles touch originales del index.html.
+  // Este archivo ya NO modifica startSprint(), pointerdown, pointerup,
+  // pointercancel, lostpointercapture, activePointerId ni sprintPointerId.
 
   // Lobby music: empieza tras la primera interacción por políticas de autoplay.
   const installLobbyMusic=()=>{
@@ -97,5 +35,8 @@
     setInterval(sync,700);
   };
 
-  const timer=setInterval(()=>{patchSprint();patchJoystick();installLobbyMusic();if(window.__NANY_SPRINT_GATED__&&(!mobile||window.__NANY_JOYSTICK_RECOVERY__)&&window.__NANY_LOBBY_MUSIC__)clearInterval(timer);},80);
+  const timer=setInterval(()=>{
+    installLobbyMusic();
+    if(window.__NANY_LOBBY_MUSIC__)clearInterval(timer);
+  },80);
 })();
