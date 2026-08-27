@@ -3,7 +3,7 @@
   "version": "5.2.0",
   "type": "module",
   "scripts": {
-    "start": "node server-gameplay-entry.mjs"
+    "start": "node server-bandwidth-entry.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"
